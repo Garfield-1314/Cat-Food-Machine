@@ -1,0 +1,16 @@
+# Build output
+src/build/
+
+# Managed components (downloaded by idf.py)
+src/managed_components/
+
+# ESP-IDF generated files
+src/sdkconfig
+src/sdkconfig.old
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
