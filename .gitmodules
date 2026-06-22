@@ -1,0 +1,6 @@
+[submodule "esp32libraries"]
+	path = esp32libraries
+	url = git@github.com:Garfield-1314/esp32libraries.git
+[submodule "esp-idf"]
+	path = esp-idf
+	url = git@github.com:espressif/esp-idf.git

@@ -1,0 +1,4 @@
+description: cat_food main component
+dependencies:
+    lvgl/lvgl: ^8.4.0
+    espressif/esp_tinyusb: "^1"
