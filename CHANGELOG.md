@@ -8,8 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- English and Chinese README documentation
+- English and Chinese README documentation for root project
 - CHANGELOG.md (this file)
+- **Standalone LVGL example** under `esp32libraries/example/LVGL/`:
+  - Extracted core ST7789 LCD driver, GT911 touch driver, and LVGL integration
+  - TinyUSB CDC virtual serial for debug logging
+  - Interactive demo UI with touch-responsive buttons
+  - Self-contained IDF project with sdkconfig.defaults and component dependencies
+- Fixed `esp32libraries/README.md` and `README_zh.md` directory paths to match actual example names
 
 ## [0.1.0] — 2026-06-22
 
