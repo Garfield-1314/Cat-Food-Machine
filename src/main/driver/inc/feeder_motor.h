@@ -16,7 +16,7 @@ extern "C" {
 void feeder_motor_init(void);
 
 /**
- * @brief 投喂指定仓位数（异步，GPTimer 硬件定时器发脉冲）
+ * @brief 投喂指定仓位数（异步，专用 FreeRTOS 任务 + GPIO 忙等发脉冲）
  *        1 个仓位 = 电机旋转 90°
  *
  * @param slots 仓位数 (1 ~ 10)

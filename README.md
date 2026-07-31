@@ -9,7 +9,7 @@ An ESP32-S3 based **intelligent cat feeder** with touchscreen UI, WiFi connectiv
 - **Touchscreen UI** — 2.8" 320x240 SPI LCD (ST7789) with LVGL graphical interface
 - **Capacitive Touch** — GT911 touch sensor (I2C) for smooth user interaction
 - **Multi-page Interface** — Home page, app launcher, feeding control, settings, WiFi configuration
-- **Scheduled Feeding** — Up to 8 configurable feeding schedules with NVS persistence
+- **Scheduled Feeding** — Up to 8 schedules with a fixed feeding time (HH:MM) and a repeat interval in days (daily / every other day / every 3 days, ...), with NVS persistence
 - **Stepper Motor Dispensing** — A4988 driven stepper motor, 1 slot = 90° rotation
 - **WiFi Connectivity** — Station mode with saved credentials, on-screen WiFi configuration
 - **SNTP Time Sync** — Automatic time synchronization via NTP (Beijing time, UTC+8)
@@ -25,6 +25,7 @@ Cat-Food-Machine/
 │   └── example/             # Example projects (LVGL, DVP camera)
 ├── src/                     # Main application firmware
 │   ├── CMakeLists.txt       # IDF project configuration
+│   ├── dependencies.lock    # Component dependency lock
 │   ├── sdkconfig*           # Build configuration
 │   ├── main/
 │   │   ├── main.c           # Application entry & feeding popup management
@@ -41,8 +42,9 @@ Cat-Food-Machine/
 │   │       ├── inc/         #   - ui.h, app_page.h, feeding_page.h
 │   │       │                #   - setting_page.h, wifi_config_page.h
 │   │       └── src/         # UI implementations
-│   ├── README.md            # This file
-│   └── CHANGELOG.md         # Release history
+├── README.md                # English documentation
+├── README_zh.md             # Chinese documentation
+└── CHANGELOG.md             # Release history
 ```
 
 ## 🚀 Getting Started
@@ -107,11 +109,14 @@ idf.py flash monitor
 
 | Signal | GPIO Pin |
 |--------|----------|
-| STEP   | 4        |
-| DIR    | 5        |
-| EN     | 6        |
+| EN     | 45       |
+| STEP   | 39       |
+| DIR    | 40       |
+| MS1    | 41       |
+| MS2    | 42       |
+| MS3    | 3        |
 
-> *Actual pin assignments are defined in the source code headers (`st7789.h`, `gt911.h`, `feeder_motor.c`). Adjust as needed for your custom PCB.*
+> *Pin definitions live in `feeder_motor.c` (compile-time constants); MS1/MS2/MS3 are driven high by default to enable 16-microstep mode. Adjust as needed for your custom PCB.*
 
 ## 📖 API Overview
 
@@ -129,13 +134,16 @@ manual_feeding_start(2);  // Dispense 2 slots
 ```c
 #include "driver/inc/feeding_schedule.h"
 
-// Add a schedule
+// Add a schedule: feed 2 slots every day at 08:00
 feed_schedule_item_t item = {
-    .hour = 8, .minute = 0, .amount = 2, .enabled = true
+    .hour = 8, .minute = 0, .amount = 2, .enabled = true,
+    .every_days = 1,   /* 1 = daily, 2 = every other day, 3 = every 3 days, ... */
 };
 feed_schedule_add_item(&item);
 feed_schedule_save();
 ```
+
+> `every_days` is the repeat interval in days (up to 7): 1 = daily, 2 = every other day, 3 = every 3 days, ... The specific days follow local calendar-day rotation (Beijing time).
 
 ### WiFi Configuration
 

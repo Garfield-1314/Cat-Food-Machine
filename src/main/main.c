@@ -46,10 +46,9 @@ void manual_feeding_start(uint8_t slots)
 }
 
 /* 投喂触发回调：调度器匹配到投喂时间时调用 */
-static void on_feeding_triggered(const feed_schedule_item_t *item)
+static void on_feeding_triggered(uint8_t amount)
 {
-    ESP_LOGI(TAG, ">>> FEEDING TRIGGERED! Time=%02d:%02d, Amount=%d slot(s)",
-             item->hour, item->minute, item->amount);
+    ESP_LOGI(TAG, ">>> FEEDING TRIGGERED! Amount=%d slot(s)", amount);
 
     /* 如果背光已熄灭，投喂时自动唤醒 */
     if (s_backlight_dimmed) {
@@ -61,11 +60,11 @@ static void on_feeding_triggered(const feed_schedule_item_t *item)
         ESP_LOGI(TAG, "Backlight restored for feeding (%d%%)", saved);
     }
 
-    s_feeding_amount = item->amount;
+    s_feeding_amount = amount;
     s_feeding_active = true;
     s_feeding_done = false;
 
-    feeder_motor_dispense(item->amount);
+    feeder_motor_dispense(amount);
 }
 
 /* LVGL 定时器回调：管理投喂弹窗的显示与隐藏（在 LVGL 上下文中执行） */
@@ -161,7 +160,7 @@ void user_component_init(void)
     /* 初始化步进电机 (A4988) */
     feeder_motor_init();
 
-    /* 从 NVS 加载投喂计划 */
+    /* 从 NVS 加载投喂计划配置 */
     esp_err_t sched_err = feed_schedule_load();
     if (sched_err != ESP_OK) {
         ESP_LOGW(TAG, "Failed to load feeding schedule: %s", esp_err_to_name(sched_err));

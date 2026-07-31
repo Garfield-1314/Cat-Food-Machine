@@ -5,7 +5,6 @@
 #include "esp_log.h"
 #include "ui/inc/ui.h"
 #include "driver/inc/feeding_schedule.h"
-#include "driver/inc/feeder_motor.h"
 
 static const char *TAG = "feeding_page";
 
@@ -20,10 +19,15 @@ static lv_obj_t *save_btn = NULL;
 static lv_obj_t *edit_dlg = NULL;
 static lv_obj_t *hour_roller = NULL;
 static lv_obj_t *min_roller = NULL;
+static lv_obj_t *every_roller = NULL;
 static lv_obj_t *amount_slider = NULL;
 static lv_obj_t *amount_label = NULL;
 static lv_obj_t *enable_switch = NULL;
 static int edit_index = -1;  /* -1 表示新增 */
+
+/* 间隔天数滚轮选项：1 ~ 7 */
+#define OPTIONS_EVERY_DAYS \
+    "1\n2\n3\n4\n5\n6\n7"
 
 /* ========== 前向声明 ========== */
 static void rebuild_list(void);
@@ -91,6 +95,19 @@ static lv_obj_t *create_list_row(int index)
     lv_obj_set_style_text_color(time_lbl, lv_color_white(), 0);
     lv_obj_align(time_lbl, LV_ALIGN_LEFT_MID, 5, 0);
 
+    /* 间隔天数文本: "Daily" / "Every 2d" */
+    char every_str[16];
+    if (item->every_days <= 1) {
+        snprintf(every_str, sizeof(every_str), "Daily");
+    } else {
+        snprintf(every_str, sizeof(every_str), "Every %dd", item->every_days);
+    }
+    lv_obj_t *every_lbl = lv_label_create(row);
+    lv_label_set_text(every_lbl, every_str);
+    lv_obj_set_style_text_font(every_lbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(every_lbl, lv_color_hex(0xAAAAAA), 0);
+    lv_obj_align(every_lbl, LV_ALIGN_CENTER, -55, 0);
+
     /* 投喂量文本: "xN slots" */
     char amt_str[16];
     snprintf(amt_str, sizeof(amt_str), "x%d", item->amount);
@@ -98,7 +115,7 @@ static lv_obj_t *create_list_row(int index)
     lv_label_set_text(amt_lbl, amt_str);
     lv_obj_set_style_text_font(amt_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(amt_lbl, lv_color_hex(0x00FF00), 0);
-    lv_obj_align(amt_lbl, LV_ALIGN_CENTER, 20, 0);
+    lv_obj_align(amt_lbl, LV_ALIGN_CENTER, 35, 0);
 
     /* 启用/禁用指示 */
     lv_obj_t *status_lbl = lv_label_create(row);
@@ -161,6 +178,13 @@ static void edit_dlg_save_cb(lv_event_t *e)
     /* 仓位数量 */
     uint8_t amount = (uint8_t)lv_slider_get_value(amount_slider);
 
+    /* 间隔天数 */
+    char every_buf[8];
+    lv_roller_get_selected_str(every_roller, every_buf, sizeof(every_buf));
+    uint8_t every_days = (uint8_t)atoi(every_buf);
+    if (every_days < 1) every_days = 1;
+    if (every_days > MAX_EVERY_DAYS) every_days = MAX_EVERY_DAYS;
+
     /* 启用状态 */
     bool enabled = lv_obj_has_state(enable_switch, LV_STATE_CHECKED);
 
@@ -169,6 +193,7 @@ static void edit_dlg_save_cb(lv_event_t *e)
         .minute = minute,
         .amount = amount,
         .enabled = enabled,
+        .every_days = every_days,
     };
 
     esp_err_t err;
@@ -313,6 +338,23 @@ static void open_edit_dialog(int index)
     lv_obj_set_style_text_color(amount_label, lv_color_hex(0x00FF00), 0);
     lv_obj_align_to(amount_label, amount_slider, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
 
+    /* --- 间隔天数选择 --- */
+    lv_obj_t *e2_label = lv_label_create(edit_dlg);
+    lv_label_set_text(e2_label, "Every (days)");
+    lv_obj_set_style_text_color(e2_label, lv_color_white(), 0);
+    lv_obj_align(e2_label, LV_ALIGN_TOP_LEFT, 10, 150);
+
+    every_roller = lv_roller_create(edit_dlg);
+    lv_roller_set_options(every_roller, OPTIONS_EVERY_DAYS, LV_ROLLER_MODE_NORMAL);
+    lv_obj_set_size(every_roller, 60, 60);
+    lv_obj_align(every_roller, LV_ALIGN_TOP_LEFT, 10, 175);
+    lv_obj_set_style_text_color(every_roller, lv_color_white(), 0);
+    if (item) {
+        int idx = (item->every_days < 1) ? 0 : item->every_days - 1;
+        if (idx > MAX_EVERY_DAYS - 1) idx = MAX_EVERY_DAYS - 1;
+        lv_roller_set_selected(every_roller, idx, LV_ANIM_OFF);
+    }
+
     /* --- 启用开关（右下角） --- */
     lv_obj_t *e_label = lv_label_create(edit_dlg);
     lv_label_set_text(e_label, "Enabled");
@@ -329,11 +371,11 @@ static void open_edit_dialog(int index)
         lv_obj_add_state(enable_switch, LV_STATE_CHECKED);  /* 默认启用 */
     }
 
-    /* 删除（左下角，仅编辑模式显示） */
+    /* 删除（底部中间，仅编辑模式显示） */
     if (index >= 0) {
         lv_obj_t *del_btn_el = lv_btn_create(edit_dlg);
         lv_obj_set_size(del_btn_el, 70, 30);
-        lv_obj_set_pos(del_btn_el, 0, 210);
+        lv_obj_set_pos(del_btn_el, 125, 210);
         lv_obj_set_style_bg_color(del_btn_el, lv_color_hex(0xAA0000), 0);
         lv_obj_t *del_lbl = lv_label_create(del_btn_el);
         lv_label_set_text(del_lbl, "Delete");
@@ -354,6 +396,7 @@ static void close_edit_dialog(void)
     edit_index = -1;
     hour_roller = NULL;
     min_roller = NULL;
+    every_roller = NULL;
     amount_slider = NULL;
     amount_label = NULL;
     enable_switch = NULL;

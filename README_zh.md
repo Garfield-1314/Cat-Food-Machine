@@ -9,7 +9,7 @@
 - **触控屏 UI** — 2.8 寸 320×240 SPI 液晶屏 (ST7789)，搭载 LVGL 图形界面
 - **电容触摸** — GT911 触摸传感器 (I2C)，流畅的用户交互体验
 - **多页面界面** — 主页、应用页、投喂控制页、设置页、WiFi 配置页
-- **定时投喂** — 最多 8 组可配置定时计划，数据持久化存储于 NVS
+- **定时投喂** — 最多 8 组定时计划，可指定投喂时间（时:分）和间隔天数（每天 / 隔 1 天 / 隔 2 天……），数据持久化存储于 NVS
 - **步进电机出粮** — A4988 驱动步进电机，1 仓格 = 90° 旋转
 - **WiFi 联网** — Station 模式，支持保存凭据及界面配置
 - **SNTP 时间同步** — 通过 NTP 自动同步时间（北京时间，UTC+8）
@@ -25,6 +25,7 @@ Cat-Food-Machine/
 │   └── example/             # 示例工程 (LVGL, DVP 摄像头)
 ├── src/                     # 主应用固件
 │   ├── CMakeLists.txt       # IDF 工程配置
+│   ├── dependencies.lock    # 组件依赖锁定
 │   ├── sdkconfig*           # 编译配置
 │   ├── main/
 │   │   ├── main.c           # 应用入口 & 投喂弹窗管理
@@ -41,9 +42,9 @@ Cat-Food-Machine/
 │   │       ├── inc/         #   - ui.h, app_page.h, feeding_page.h
 │   │       │                #   - setting_page.h, wifi_config_page.h
 │   │       └── src/         # UI 实现
-│   ├── README.md            # 英文说明
-│   ├── README_zh.md         # 本文件 (中文说明)
-│   └── CHANGELOG.md         # 版本更新日志
+├── README.md                # 英文说明
+├── README_zh.md             # 本文件 (中文说明)
+└── CHANGELOG.md             # 版本更新日志
 ```
 
 ## 🚀 快速开始
@@ -108,11 +109,14 @@ idf.py flash monitor
 
 | 信号 | GPIO 引脚 |
 |------|-----------|
-| STEP | 4         |
-| DIR  | 5         |
-| EN   | 6         |
+| EN   | 45        |
+| STEP | 39        |
+| DIR  | 40        |
+| MS1  | 41        |
+| MS2  | 42        |
+| MS3  | 3         |
 
-> *实际引脚定义请参考源码头文件 (`st7789.h`、`gt911.h`、`feeder_motor.c`)，可根据您的自定义 PCB 进行调整。*
+> *引脚定义位于 `feeder_motor.c`（编译期常量），MS1/MS2/MS3 默认置高启用 16 微步细分；可根据您的自定义 PCB 进行调整。*
 
 ## 📖 API 概览
 
@@ -130,13 +134,16 @@ manual_feeding_start(2);  // 投喂 2 个仓
 ```c
 #include "driver/inc/feeding_schedule.h"
 
-// 添加一条计划
+// 添加一条计划：每天 08:00 投喂 2 仓
 feed_schedule_item_t item = {
-    .hour = 8, .minute = 0, .amount = 2, .enabled = true
+    .hour = 8, .minute = 0, .amount = 2, .enabled = true,
+    .every_days = 1,   /* 1 = 每天, 2 = 隔 1 天, 3 = 隔 2 天 ... */
 };
 feed_schedule_add_item(&item);
 feed_schedule_save();
 ```
+
+> `every_days` 表示投喂间隔天数：1 = 每天，2 = 隔 1 天，3 = 隔 2 天……最多 7 天；具体落在哪几天按本地自然日（北京时间）轮换。
 
 ### WiFi 配置
 
