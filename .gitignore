@@ -8,6 +8,13 @@ src/managed_components/
 src/sdkconfig
 src/sdkconfig.old
 
+# Offline UI simulator build output
+sim/build/
+
+# Simulator preview images
+sim/*.ppm
+sim/*.png
+
 # IDE and editor files
 .vscode/
 .idea/
