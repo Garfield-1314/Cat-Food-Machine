@@ -10,8 +10,9 @@ An ESP32-S3 based **intelligent cat feeder** with touchscreen UI, WiFi connectiv
 - **Capacitive Touch** — GT911 touch sensor (I2C) for smooth user interaction
 - **Multi-page Interface** — Home page, app launcher, feeding control, settings, WiFi configuration
 - **Scheduled Feeding** — Up to 8 schedules with a fixed feeding time (HH:MM) and a repeat interval in days (daily / every other day / every 3 days, ...), with NVS persistence
-- **Stepper Motor Dispensing** — A4988 driven stepper motor, 1 slot = 90° rotation
-- **WiFi Connectivity** — Station mode with saved credentials, on-screen WiFi configuration
+ - **Stepper Motor Dispensing** — A4988 driven stepper motor, 1 slot = 90° rotation
+ - **OV2640 Camera** — DVP 8-bit parallel interface, RGB565 320×240 live preview on screen
+ - **WiFi Connectivity** — Station mode with saved credentials, on-screen WiFi configuration
 - **SNTP Time Sync** — Automatic time synchronization via NTP (Beijing time, UTC+8)
 - **Auto Backlight Dimming** — Automatically dims backlight after 5 minutes of inactivity
 - **USB Virtual Serial** — TinyUSB CDC for debug logging and communication
@@ -41,10 +42,10 @@ Cat-Food-Machine/
 │   │   └── ui/              # LVGL user interface
 │   │       ├── inc/         #   - ui.h, app_page.h, feeding_page.h
 │   │       │                #   - setting_page.h, wifi_config_page.h
+│   │       │                #   - camera_page.h
 │   │       └── src/         # UI implementations
 ├── sim/                     # Offline UI simulator (debug UI on PC, no flashing)
 │   ├── main.c               #   SDL2 interactive window build
-│   ├── offscreen_main.c     #   Offscreen rendering (PPM screenshots)
 │   ├── include/             #   Stub headers (replace hardware deps)
 │   ├── src/                 #   Stub implementations
 │   └── README.md            #   Simulator documentation
@@ -98,9 +99,9 @@ only replacing hardware dependencies with stubs (WiFi / SNTP / feeding schedule 
 ### Prerequisites
 
 - CMake ≥ 3.12, a C compiler
-- **SDL2** (only for the interactive window build; the offscreen build needs nothing)
+- **SDL2**
 
-### Option A: SDL2 interactive window (recommended)
+### Build & Run
 
 ```bash
 # Install SDL2 (Ubuntu/Debian)
@@ -110,15 +111,6 @@ cd sim
 cmake -S . -B build
 cmake --build build -j
 ./build/cat_food_sim       # Opens a 640×480 window; mouse = touch; interactive debugging
-```
-
-### Option B: Offscreen rendering (headless / CI)
-
-```bash
-cd sim
-cmake -S . -B build
-cmake --build build -j
-./build/cat_food_sim_offscreen /tmp/out_   # Renders all pages as PPM screenshots
 ```
 
 ### How firmware changes sync
@@ -167,6 +159,20 @@ cmake --build build -j
 | MS3    | 3        |
 
 > *Pin definitions live in `feeder_motor.c` (compile-time constants); MS1/MS2/MS3 are driven high by default to enable 16-microstep mode. Adjust as needed for your custom PCB.*
+
+### OV2640 Camera — DVP parallel interface + SCCB (I2C)
+
+| Signal  | GPIO Pin |
+|---------|----------|
+| D0 ~ D7 | 11, 9, 8, 10, 12, 18, 17, 16 |
+| VSYNC   | 6        |
+| DE (HREF) | 7      |
+| PCLK    | 13       |
+| XCLK    | 15       |
+| SCCB SCL | 5       |
+| SCCB SDA | 4       |
+
+> *SCCB runs on a dedicated I2C_NUM_1 bus (no conflict with GT911 on I2C_NUM_0). Camera pins live in `ov2640.h` (compile-time constants), RGB565 320×240.*
 
 ## 📖 API Overview
 
@@ -217,6 +223,8 @@ bool connected = wifi_app_is_connected();
 | GT911     | —       | Capacitive touch controller |
 | TinyUSB   | —       | USB CDC virtual serial |
 | A4988     | —       | Stepper motor driver |
+| OV2640    | —       | DVP camera (RGB565 320×240) |
+| esp_cam_sensor | ^1.1.0 | OV2640 sensor driver |
 
 ## 🤝 Contributing
 

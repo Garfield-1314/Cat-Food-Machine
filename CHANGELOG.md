@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added / 新增
 
+- **OV2640 Camera / OV2640 摄像头**
+  - DVP 8-bit parallel interface with SCCB on dedicated I2C_NUM_1 (pins D0-D7: 11,9,8,10,12,18,17,16; VSYNC:6, DE:7, PCLK:13, XCLK:15, SCCB SCL:5, SDA:4)
+  - DVP 8-bit 并行接口，SCCB 使用独立 I2C_NUM_1 总线（D0-D7: 11,9,8,10,12,18,17,16；VSYNC:6、DE:7、PCLK:13、XCLK:15、SCCB SCL:5、SDA:4）
+  - RGB565 320×240 live preview on the 320×240 ST7789 LCD via a new Camera page (app launcher icon)
+  - 新增“摄像头”页面，RGB565 320×240 实时画面显示在 320×240 ST7789 屏幕上（主界面应用图标进入）
+  - `esp_cam_sensor` component dependency and PSRAM enabled for frame buffers
+  - 引入 `esp_cam_sensor` 组件依赖并启用 PSRAM 用于帧缓冲
+
 - **Documentation / 文档完善**
   - English and Chinese README documentation for root project
   - 根项目的中英文 README 说明文档

@@ -160,6 +160,14 @@ void user_component_init(void)
     /* 初始化步进电机 (A4988) */
     feeder_motor_init();
 
+    /* 初始化 OV2640 摄像头 (DVP) —— 失败不影响主流程，UI 会提示 */
+    esp_err_t cam_err = ov2640_camera_init();
+    if (cam_err != ESP_OK) {
+        ESP_LOGW(TAG, "OV2640 camera init failed: %s", esp_err_to_name(cam_err));
+    } else {
+        ESP_LOGI(TAG, "OV2640 camera ready (enter Camera page to start stream)");
+    }
+
     /* 从 NVS 加载投喂计划配置 */
     esp_err_t sched_err = feed_schedule_load();
     if (sched_err != ESP_OK) {

@@ -25,20 +25,9 @@ UI 页面原本依赖 ESP-IDF 硬件 API，PC 上无法编译。桩提供了同�
 
 - **CMake ≥ 3.12**、C 编译器
 - **LVGL**：直接引用 `src/managed_components/lvgl__lvgl`（与固件同版本 v8.4.0）
-- **SDL2**（可选，仅窗口交互版需要）
+- **SDL2**（窗口交互版需要）
 
 ## 构建
-
-### 方式 A：离屏截图版（无头，无需任何系统库）
-
-```bash
-cd sim
-cmake -S . -B build
-cmake --build build -j
-./build/cat_food_sim_offscreen preview.ppm   # 渲染 UI 并输出 PPM 图像
-```
-
-### 方式 B：SDL2 窗口交互版（推荐，需桌面环境）
 
 先安装 SDL2（以 Ubuntu/Debian 为例）：
 
@@ -51,7 +40,7 @@ sudo apt install -y libsdl2-dev
 
 ```bash
 cd sim
-cmake -S . -B build -DSDL2_DIR=$(pkg-config --variable=prefix sdl2)/lib/cmake/SDL2
+cmake -S . -B build
 cmake --build build -j
 ./build/cat_food_sim
 ```
@@ -62,10 +51,9 @@ cmake --build build -j
 
 ```
 sim/
-├── CMakeLists.txt        # 构建脚本（双目标）
+├── CMakeLists.txt        # 构建脚本
 ├── lv_conf.h             # LVGL 配置（与固件同分辨率/色深）
 ├── main.c                # SDL2 窗口模拟器主程序
-├── offscreen_main.c      # 离屏渲染（输出 PPM）
 ├── README.md
 ├── include/              # 桩头文件（含 device/inc、driver/inc、freertos 等）
 └── src/                  # 桩实现

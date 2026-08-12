@@ -130,7 +130,7 @@ lv_obj_t *create_app_page(void)
   // WiFi 设置应用图标
   lv_obj_t *wifi_app_btn = lv_btn_create(app_page);
   lv_obj_set_size(wifi_app_btn, 60, 60);
-  lv_obj_align(wifi_app_btn, LV_ALIGN_BOTTOM_LEFT, 55, -25);
+  lv_obj_align(wifi_app_btn, LV_ALIGN_BOTTOM_LEFT, 30, -25);
   lv_obj_t *wifi_app_label = lv_label_create(wifi_app_btn);
   lv_label_set_text(wifi_app_label, LV_SYMBOL_WIFI);
   lv_obj_center(wifi_app_label);
@@ -140,17 +140,27 @@ lv_obj_t *create_app_page(void)
   // 投喂计划应用图标
   lv_obj_t *feed_btn = lv_btn_create(app_page);
   lv_obj_set_size(feed_btn, 60, 60);
-  lv_obj_align(feed_btn, LV_ALIGN_BOTTOM_MID, 0, -25);
+  lv_obj_align(feed_btn, LV_ALIGN_BOTTOM_MID, -55, -25);
   lv_obj_t *feed_btn_label = lv_label_create(feed_btn);
   lv_label_set_text(feed_btn_label, LV_SYMBOL_LIST);
   lv_obj_center(feed_btn_label);
   lv_obj_add_event_cb(feed_btn, switch_page_cb, LV_EVENT_CLICKED,
                       "feeding_page");
 
+  // 摄像头应用图标
+  lv_obj_t *camera_btn = lv_btn_create(app_page);
+  lv_obj_set_size(camera_btn, 60, 60);
+  lv_obj_align(camera_btn, LV_ALIGN_BOTTOM_MID, 55, -25);
+  lv_obj_t *camera_btn_label = lv_label_create(camera_btn);
+  lv_label_set_text(camera_btn_label, LV_SYMBOL_IMAGE);
+  lv_obj_center(camera_btn_label);
+  lv_obj_add_event_cb(camera_btn, switch_page_cb, LV_EVENT_CLICKED,
+                      "camera_page");
+
   // 设置功能按钮（圆形图标）
   lv_obj_t *settings_btn = lv_btn_create(app_page);
   lv_obj_set_size(settings_btn, 60, 60);
-  lv_obj_align(settings_btn, LV_ALIGN_BOTTOM_RIGHT, -55, -25);
+  lv_obj_align(settings_btn, LV_ALIGN_BOTTOM_RIGHT, -30, -25);
   lv_obj_t *settings_label = lv_label_create(settings_btn);
   lv_label_set_text(settings_label, LV_SYMBOL_SETTINGS);
   lv_obj_center(settings_label);

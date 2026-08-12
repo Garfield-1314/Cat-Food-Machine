@@ -32,12 +32,7 @@ file(GLOB STUB_SRCS CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/src/*.c)
 # 桩头最优先；随后是固件 src/main（解析 "ui/inc/*.h" 与 "include.h"）
 set(SIM_INCS ${PROJECT_SOURCE_DIR}/include ${UI_DIR})
 
-# ---- 离屏截图版（无需 SDL2，用于无头验证 / 生成预览图）----
-add_executable(cat_food_sim_offscreen offscreen_main.c ${UI_SRCS} ${STUB_SRCS})
-target_include_directories(cat_food_sim_offscreen PRIVATE ${SIM_INCS})
-target_link_libraries(cat_food_sim_offscreen PRIVATE lvgl)
-
-# ---- SDL2 窗口交互版（可选，需安装 libsdl2-dev）----
+# ---- SDL2 窗口交互版（需安装 libsdl2-dev）----
 find_package(SDL2 QUIET)
 if(SDL2_FOUND)
   add_executable(cat_food_sim main.c ${UI_SRCS} ${STUB_SRCS})
