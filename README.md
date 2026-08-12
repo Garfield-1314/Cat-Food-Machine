@@ -1,6 +1,6 @@
 # 🐱 Cat Food Machine — 智能猫粮投喂机
 
-English | [中文版](./README_zh.md)
+English | [中文](./README_zh.md)
 
 An ESP32-S3 based **intelligent cat feeder** with touchscreen UI, WiFi connectivity, scheduled feeding, and stepper motor control.
 

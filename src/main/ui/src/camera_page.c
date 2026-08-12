@@ -72,19 +72,10 @@ lv_obj_t *create_camera_page(void)
     camera_page = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(camera_page, lv_color_hex(0x000000), LV_PART_MAIN);
 
-    /* 返回按钮（左上角） */
-    lv_obj_t *back_btn = lv_btn_create(camera_page);
-    lv_obj_set_size(back_btn, 60, 30);
-    lv_obj_set_pos(back_btn, 0, 0);
-    lv_obj_t *back_label = lv_label_create(back_btn);
-    lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
-    lv_obj_center(back_label);
-    lv_obj_add_event_cb(back_btn, switch_page_cb, LV_EVENT_CLICKED, "app_page");
-
     if (cam_ready) {
-        /* 全屏摄像头画面（下方 320x240 区域） */
+        /* 全屏摄像头画面（320x240 填满整个屏幕） */
         cam_img = lv_img_create(camera_page);
-        lv_obj_set_pos(cam_img, 0, 30);
+        lv_obj_set_pos(cam_img, 0, 0);
         lv_img_set_src(cam_img, NULL);
 
         refresh_timer = lv_timer_create(camera_refresh_cb, 40, NULL);
@@ -99,6 +90,15 @@ lv_obj_t *create_camera_page(void)
         lv_obj_set_style_text_color(status_label, lv_color_hex(0xFF0000), 0);
         lv_obj_center(status_label);
     }
+
+    /* 返回按钮最后创建，浮在摄像头画面顶层 */
+    lv_obj_t *back_btn = lv_btn_create(camera_page);
+    lv_obj_set_size(back_btn, 60, 30);
+    lv_obj_set_pos(back_btn, 0, 0);
+    lv_obj_t *back_label = lv_label_create(back_btn);
+    lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
+    lv_obj_center(back_label);
+    lv_obj_add_event_cb(back_btn, switch_page_cb, LV_EVENT_CLICKED, "app_page");
 
     lv_obj_add_event_cb(camera_page, camera_page_delete_cb, LV_EVENT_DELETE, NULL);
 

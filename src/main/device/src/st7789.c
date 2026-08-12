@@ -166,11 +166,10 @@ esp_lcd_panel_handle_t lcd_st7789_get_panel_handle(void)
 
 void lcd_st7789_draw_rect(int x1, int y1, int x2, int y2, uint16_t color)
 {
-  if (panel_handle == NULL) {
-    ESP_LOGE(TAG, "面板未初始化");
+  if (x2 < x1 || y2 < y1) {
     return;
   }
-  esp_lcd_panel_draw_bitmap(panel_handle, x1, y1, x2, y2, (void *)&color);
+  lcd_st7789_fill_rect(x1, y1, x2 - x1 + 1, y2 - y1 + 1, color);
 }
 
 void lcd_st7789_fill_screen(uint16_t color)

@@ -1,6 +1,6 @@
 # 🐱 Cat Food Machine — 智能猫粮投喂机
 
-[English](./README.md) | 中文版
+[English](./README.md) | 中文
 
 基于 **ESP32-S3** 的智能猫粮投喂机，配备触控屏界面、WiFi 联网、定时投喂及步进电机控制功能。
 

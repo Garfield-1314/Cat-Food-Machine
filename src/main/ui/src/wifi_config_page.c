@@ -1,6 +1,7 @@
 #include "ui/inc/wifi_config_page.h"
 
 #include <string.h>
+#include <stdlib.h>
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -49,14 +50,15 @@ static void ta_event_cb(lv_event_t *e)
     }
 }
 
-/* WiFi 连接任务函数 */
+/* WiFi 连接任务函数（参数为堆上拷贝的 "ssid\0password" 组合，任务内不访问 LVGL） */
 static void wifi_connect_task(void *arg)
 {
-    const char *ssid = (const char *)arg;
-    /* pass_ta 是全局静态变量，可以直接访问 */
-    const char *password = lv_textarea_get_text(pass_ta);
+    char *cred = (char *)arg;
+    const char *ssid = cred;
+    const char *password = cred + strlen(cred) + 1;
     wifi_app_connect(ssid, password);
     vTaskDelay(pdMS_TO_TICKS(100));
+    free(cred);
     vTaskDelete(NULL);
 }
 
@@ -81,8 +83,20 @@ static void connect_btn_cb(lv_event_t *e)
     /* 保存配置并连接 */
     wifi_app_save_config(ssid, password);
 
+    /* 拷贝凭据到堆上，避免切页后 textarea 缓冲失效（悬垂指针） */
+    size_t ssid_len = strlen(ssid) + 1;
+    size_t pass_len = strlen(password) + 1;
+    char *cred = malloc(ssid_len + pass_len);
+    if (cred == NULL) {
+        lv_label_set_text(status_label, "OOM!");
+        lv_obj_set_style_text_color(status_label, lv_color_hex(0xFF0000), 0);
+        return;
+    }
+    memcpy(cred, ssid, ssid_len);
+    memcpy(cred + ssid_len, password, pass_len);
+
     /* 在任务中连接，避免阻塞UI */
-    xTaskCreate(wifi_connect_task, "wifi_connect", 4096, (void *)ssid, 5, NULL);
+    xTaskCreate(wifi_connect_task, "wifi_connect", 4096, cred, 5, NULL);
 }
 
 /* 键盘的"完成/连接"按钮回调 - 处理键盘关闭和触发的回车 */

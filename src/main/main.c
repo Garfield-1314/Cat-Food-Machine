@@ -12,11 +12,27 @@ static uint8_t s_feeding_amount = 0;
 #define IDLE_TIMEOUT_MS  300000   /* 5 分钟无操作熄灭背光 */
 static bool s_backlight_dimmed = false;
 
+/* 非 LVGL 上下文（调度器任务）请求恢复背光，由 LVGL 定时器消费 */
+static volatile bool s_backlight_restore_pending = false;
+
 /* WiFi 连接成功后的回调 */
 static void on_wifi_connected(void)
 {
     ESP_LOGI(TAG, "WiFi connected, starting SNTP time sync...");
     sntp_time_init();
+}
+
+/* LVGL 上下文内恢复背光 */
+static void restore_backlight_lvgl(void)
+{
+    if (s_backlight_dimmed) {
+        s_backlight_dimmed = false;
+        uint8_t saved = lcd_st7789_get_brightness();
+        if (saved == 0) saved = 100;
+        lcd_st7789_set_brightness(saved);
+        lv_disp_trig_activity(NULL);  /* 重置 LVGL 空闲计时，防止立即再次熄灭 */
+        ESP_LOGI(TAG, "Backlight restored (%d%%)", saved);
+    }
 }
 
 /* 手动喂食：外部可调用，喂指定仓位数 */
@@ -28,14 +44,7 @@ void manual_feeding_start(uint8_t slots)
     }
 
     /* 如果背光已熄灭，喂食时自动唤醒 */
-    if (s_backlight_dimmed) {
-        s_backlight_dimmed = false;
-        uint8_t saved = lcd_st7789_get_brightness();
-        if (saved == 0) saved = 100;
-        lcd_st7789_set_brightness(saved);
-        lv_disp_trig_activity(NULL);
-        ESP_LOGI(TAG, "Backlight restored for manual feeding (%d%%)", saved);
-    }
+    restore_backlight_lvgl();
 
     s_feeding_amount = slots;
     s_feeding_active = true;
@@ -45,19 +54,14 @@ void manual_feeding_start(uint8_t slots)
     ESP_LOGI(TAG, "Manual feeding started: %d slot(s)", slots);
 }
 
-/* 投喂触发回调：调度器匹配到投喂时间时调用 */
+/* 投喂触发回调：调度器匹配到投喂时间时调用（非 LVGL 上下文！） */
 static void on_feeding_triggered(uint8_t amount)
 {
     ESP_LOGI(TAG, ">>> FEEDING TRIGGERED! Amount=%d slot(s)", amount);
 
-    /* 如果背光已熄灭，投喂时自动唤醒 */
+    /* 如果背光已熄灭，标记待恢复，由 LVGL 定时器执行（不能在非 LVGL 上下文碰 LVGL API） */
     if (s_backlight_dimmed) {
-        s_backlight_dimmed = false;
-        uint8_t saved = lcd_st7789_get_brightness();
-        if (saved == 0) saved = 100;
-        lcd_st7789_set_brightness(saved);
-        lv_disp_trig_activity(NULL);  /* 重置 LVGL 空闲计时，防止立即再次熄灭 */
-        ESP_LOGI(TAG, "Backlight restored for feeding (%d%%)", saved);
+        s_backlight_restore_pending = true;
     }
 
     s_feeding_amount = amount;
@@ -74,6 +78,12 @@ static void feeding_popup_timer_cb(lv_timer_t *timer)
 
     /* === 背光自动熄灭 / 唤醒检测 === */
     uint32_t inactive_ms = lv_disp_get_inactive_time(NULL);
+
+    /* 非 LVGL 上下文（调度器）请求恢复背光：在 LVGL 上下文中执行 */
+    if (s_backlight_restore_pending) {
+        s_backlight_restore_pending = false;
+        restore_backlight_lvgl();
+    }
 
     if (inactive_ms > IDLE_TIMEOUT_MS && !s_backlight_dimmed) {
         /* 超过 5 分钟无操作，熄灭背光 */
