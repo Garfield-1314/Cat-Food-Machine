@@ -11,6 +11,13 @@ extern "C" {
 /* WiFi 连接状态回调 */
 typedef void (*wifi_connected_cb_t)(void);
 
+/* 扫描到的 AP 信息 */
+typedef struct {
+    char ssid[33];   /* null 结尾的 SSID */
+    int8_t rssi;     /* 信号强度 (dBm) */
+    uint8_t authmode; /* wifi_auth_mode_t 取值 */
+} wifi_ap_info_t;
+
 /**
  * @brief 初始化 WiFi Station 模式
  *        从 NVS 读取保存的 SSID/密码，自动尝试连接
@@ -29,6 +36,15 @@ esp_err_t wifi_app_connect(const char *ssid, const char *password);
  * @brief 断开 WiFi 连接
  */
 void wifi_app_disconnect(void);
+
+/**
+ * @brief 扫描附近的 WiFi 热点
+ * @param results 输出 AP 数组（由调用者提供）
+ * @param count   输入为数组容量，输出为实际扫描到的 AP 数
+ * @param max_count 最多返回的 AP 数量
+ * @return ESP_OK 成功，否则失败
+ */
+esp_err_t wifi_app_scan(wifi_ap_info_t *results, uint16_t *count, uint16_t max_count);
 
 /**
  * @brief 获取当前 WiFi 连接状态

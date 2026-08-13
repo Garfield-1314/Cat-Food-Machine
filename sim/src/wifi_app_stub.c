@@ -62,3 +62,22 @@ void wifi_app_save_config(const char *ssid, const char *password)
         s_pass[64] = '\0';
     }
 }
+
+esp_err_t wifi_app_scan(wifi_ap_info_t *results, uint16_t *count, uint16_t max_count)
+{
+    static const wifi_ap_info_t fake_aps[] = {
+        {"SIM-Home",     -40, WIFI_AUTH_WPA2_PSK},
+        {"SIM-Open",     -52, WIFI_AUTH_OPEN},
+        {"SIM-Net",      -65, WIFI_AUTH_WPA_PSK},
+        {"Garage IoT",   -72, WIFI_AUTH_WPA3_PSK},
+        {"SIM-WiFi",     -80, WIFI_AUTH_OPEN},
+    };
+
+    uint16_t n = sizeof(fake_aps) / sizeof(fake_aps[0]);
+    if (n > max_count) n = max_count;
+    for (uint16_t i = 0; i < n; i++) {
+        results[i] = fake_aps[i];
+    }
+    *count = n;
+    return ESP_OK;
+}

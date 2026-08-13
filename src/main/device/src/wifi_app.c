@@ -41,6 +41,8 @@ static void retry_timer_cb(void *arg)
     s_retry_num = 0;
     s_connecting = true;
     esp_wifi_connect();
+    /* 重新装载单次定时器，实现每 10 分钟重试一次 */
+    esp_timer_start_once(s_retry_timer, RETRY_TIMER_PERIOD_MS * 1000ULL);
 }
 
 static void stop_retry_timer(void)
@@ -236,6 +238,68 @@ void wifi_app_disconnect(void)
     esp_wifi_disconnect();
     s_is_connected = false;
     memset(s_current_ssid, 0, sizeof(s_current_ssid));
+}
+
+esp_err_t wifi_app_scan(wifi_ap_info_t *results, uint16_t *count, uint16_t max_count)
+{
+    if (results == NULL || count == NULL || max_count == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    wifi_scan_config_t scan_cfg = {
+        .ssid = NULL,
+        .bssid = NULL,
+        .channel = 0,
+        .show_hidden = false,
+        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
+        .scan_time.active.min = 100,
+        .scan_time.active.max = 300,
+    };
+
+    esp_err_t ret = esp_wifi_scan_start(&scan_cfg, true);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Scan start failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    uint16_t ap_num = 0;
+    ret = esp_wifi_scan_get_ap_num(&ap_num);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Scan get_ap_num failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    if (ap_num > max_count) {
+        ap_num = max_count;
+    }
+
+    if (ap_num == 0) {
+        *count = 0;
+        return ESP_OK;
+    }
+
+    wifi_ap_record_t *aps = calloc(ap_num, sizeof(wifi_ap_record_t));
+    if (aps == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    ret = esp_wifi_scan_get_ap_records(&ap_num, aps);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Scan get_ap_records failed: %s", esp_err_to_name(ret));
+        free(aps);
+        return ret;
+    }
+
+    for (uint16_t i = 0; i < ap_num; i++) {
+        memcpy(results[i].ssid, aps[i].ssid, sizeof(aps[i].ssid));
+        results[i].ssid[sizeof(results[i].ssid) - 1] = '\0';
+        results[i].rssi = aps[i].rssi;
+        results[i].authmode = (uint8_t)aps[i].authmode;
+    }
+    *count = ap_num;
+
+    free(aps);
+    return ESP_OK;
 }
 
 bool wifi_app_is_connected(void)
