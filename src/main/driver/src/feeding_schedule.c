@@ -3,7 +3,6 @@
 #include <string.h>
 #include <time.h>
 #include "esp_log.h"
-#include "esp_timer.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "freertos/FreeRTOS.h"
@@ -16,6 +15,10 @@ static const char *TAG = "feeding_schedule";
 #define NVS_NAMESPACE   "feed_sched"
 #define KEY_COUNT       "count"
 #define KEY_ITEM_FMT    "item_%d"
+#define KEY_OBSOLETE    "config"  /* 旧版"每周期次数+间隔"配置键，保存时清理 */
+
+/* 旧版 24h 计划项大小 (hour/minute/amount/enabled)，用于 NVS 自动迁移 */
+#define LEGACY_ITEM_SIZE 4
 
 /* ========== 内部状态 ========== */
 static feed_schedule_item_t s_items[MAX_SCHEDULE_ITEMS];
@@ -44,6 +47,23 @@ static void unlock(void)
     if (s_mutex) {
         xSemaphoreGive(s_mutex);
     }
+}
+
+/* 校验并修正计划项参数 */
+static void sanitize_item(feed_schedule_item_t *item)
+{
+    if (item->hour > 23) item->hour = 0;
+    if (item->minute > 59) item->minute = 0;
+    if (item->amount < 1) item->amount = 1;
+    if (item->amount > 10) item->amount = 10;
+    if (item->every_days < 1) item->every_days = 1;
+    if (item->every_days > MAX_EVERY_DAYS) item->every_days = MAX_EVERY_DAYS;
+}
+
+/* 清理旧版"每周期次数+间隔"配置键 */
+static void erase_obsolete_keys(nvs_handle_t nvs)
+{
+    nvs_erase_key(nvs, KEY_OBSOLETE);
 }
 
 /* ========== NVS 读写 ========== */
@@ -76,9 +96,10 @@ esp_err_t feed_schedule_load(void)
         return ESP_OK;
     }
 
-    if (count > MAX_SCHEDULE_ITEMS) {
-        count = MAX_SCHEDULE_ITEMS;
-    }
+    if (count < 0) count = 0;
+    if (count > MAX_SCHEDULE_ITEMS) count = MAX_SCHEDULE_ITEMS;
+
+    bool migrated = false;
 
     for (int i = 0; i < count; i++) {
         char key[16];
@@ -91,6 +112,15 @@ esp_err_t feed_schedule_load(void)
             count = i;  /* 只加载已成功读取的 */
             break;
         }
+
+        if (len == LEGACY_ITEM_SIZE) {
+            /* 旧版 24h 格式 (hour/minute/amount/enabled)，默认每天投喂 */
+            s_items[i].every_days = 1;
+            migrated = true;
+            ESP_LOGI(TAG, "Item %d: legacy 24h format, every_days set to 1 (daily)", i);
+        }
+
+        sanitize_item(&s_items[i]);
     }
 
     s_count = count;
@@ -98,6 +128,12 @@ esp_err_t feed_schedule_load(void)
     unlock();
 
     ESP_LOGI(TAG, "Loaded %d schedule items from NVS", s_count);
+
+    if (migrated) {
+        ESP_LOGI(TAG, "Legacy item format detected, upgrading schedule data...");
+        return feed_schedule_save();
+    }
+
     return ESP_OK;
 }
 
@@ -135,6 +171,8 @@ esp_err_t feed_schedule_save(void)
             return err;
         }
     }
+
+    erase_obsolete_keys(nvs);  /* 清理旧版配置键，忽略错误 */
 
     err = nvs_commit(nvs);
     nvs_close(nvs);
@@ -183,10 +221,12 @@ esp_err_t feed_schedule_set_item(int index, const feed_schedule_item_t *item)
         return ESP_ERR_INVALID_ARG;
     }
     memcpy(&s_items[index], item, sizeof(feed_schedule_item_t));
+    sanitize_item(&s_items[index]);
     unlock();
 
-    ESP_LOGI(TAG, "Set item %d: %02d:%02d amount=%d enabled=%d",
-             index, item->hour, item->minute, item->amount, item->enabled);
+    ESP_LOGI(TAG, "Set item %d: %02d:%02d every %dd amount=%d enabled=%d",
+             index, s_items[index].hour, s_items[index].minute,
+             s_items[index].every_days, s_items[index].amount, s_items[index].enabled);
     return ESP_OK;
 }
 
@@ -203,12 +243,15 @@ esp_err_t feed_schedule_add_item(const feed_schedule_item_t *item)
         return ESP_ERR_NO_MEM;
     }
     memcpy(&s_items[s_count], item, sizeof(feed_schedule_item_t));
+    sanitize_item(&s_items[s_count]);
     s_last_triggered[s_count] = 0;  /* 重置触发记录 */
     s_count++;
     unlock();
 
-    ESP_LOGI(TAG, "Added item %d: %02d:%02d amount=%d enabled=%d",
-             s_count - 1, item->hour, item->minute, item->amount, item->enabled);
+    ESP_LOGI(TAG, "Added item %d: %02d:%02d every %dd amount=%d enabled=%d",
+             s_count - 1, s_items[s_count - 1].hour, s_items[s_count - 1].minute,
+             s_items[s_count - 1].every_days, s_items[s_count - 1].amount,
+             s_items[s_count - 1].enabled);
     return ESP_OK;
 }
 
@@ -232,7 +275,39 @@ esp_err_t feed_schedule_remove_item(int index)
     return ESP_OK;
 }
 
-/* ========== 调度器后台任务 ========== */
+/* ========== 天数轮换与调度器 ========== */
+
+/* 本地自然日到 epoch 的天数（北京时间），用于"每隔几天"的天数轮换 */
+static int get_local_day_index(void)
+{
+    time_t now;
+    struct tm tm;
+
+    time(&now);
+    localtime_r(&now, &tm);
+
+    tm.tm_hour = 0;
+    tm.tm_min = 0;
+    tm.tm_sec = 0;
+    tm.tm_isdst = -1;
+
+    time_t local_midnight = mktime(&tm);
+    if (local_midnight == (time_t)-1) {
+        return 0;
+    }
+    return (int)(local_midnight / 86400);
+}
+
+/* 时间是否已同步（年份合理），防止开机未同步时误投喂 */
+static bool time_valid(void)
+{
+    time_t now;
+    struct tm tm;
+
+    time(&now);
+    localtime_r(&now, &tm);
+    return (tm.tm_year >= (2024 - 1900));
+}
 
 static void scheduler_task_func(void *arg)
 {
@@ -246,6 +321,11 @@ static void scheduler_task_func(void *arg)
             continue;
         }
 
+        /* 时间未同步前不调度，防止开机误投喂 */
+        if (!time_valid()) {
+            continue;
+        }
+
         /* 获取当前时间 */
         time_t now;
         struct tm tm;
@@ -254,6 +334,7 @@ static void scheduler_task_func(void *arg)
 
         int current_hour = tm.tm_hour;
         int current_min = tm.tm_min;
+        int day_index = get_local_day_index();
 
         lock();
 
@@ -262,17 +343,20 @@ static void scheduler_task_func(void *arg)
                 continue;
             }
 
-            /* 检查小时和分钟是否匹配 */
-            if (s_items[i].hour == current_hour && s_items[i].minute == current_min) {
+            /* 时间匹配，且当天属于该计划项的天数轮换 */
+            if (s_items[i].hour == current_hour &&
+                s_items[i].minute == current_min &&
+                (day_index % s_items[i].every_days) == 0) {
                 /* 检查是否在1分钟内重复触发 */
                 if (now - s_last_triggered[i] >= 60) {
                     s_last_triggered[i] = now;
-                    ESP_LOGI(TAG, "Triggering feed item %d: %02d:%02d amount=%d",
-                             i, s_items[i].hour, s_items[i].minute, s_items[i].amount);
+                    ESP_LOGI(TAG, "Triggering feed item %d: %02d:%02d every %dd amount=%d",
+                             i, s_items[i].hour, s_items[i].minute,
+                             s_items[i].every_days, s_items[i].amount);
 
                     /* 解锁后再回调，避免死锁 */
                     unlock();
-                    s_callback(&s_items[i]);
+                    s_callback(s_items[i].amount);
                     lock();
                 }
             }

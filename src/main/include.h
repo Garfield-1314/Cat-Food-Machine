@@ -11,6 +11,7 @@
 #include "device/inc/gt911.h"
 #include "device/inc/wifi_app.h"
 #include "device/inc/sntp_time.h"
+#include "device/inc/ov2640.h"
 
 #include "ui/inc/ui.h"
 

@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added / 新增
 
+- **OV2640 Camera / OV2640 摄像头**
+  - DVP 8-bit parallel interface with SCCB on dedicated I2C_NUM_1 (pins D0-D7: 11,9,8,10,12,18,17,16; VSYNC:6, DE:7, PCLK:13, XCLK:15, SCCB SCL:5, SDA:4)
+  - DVP 8-bit 并行接口，SCCB 使用独立 I2C_NUM_1 总线（D0-D7: 11,9,8,10,12,18,17,16；VSYNC:6、DE:7、PCLK:13、XCLK:15、SCCB SCL:5、SDA:4）
+  - RGB565 320×240 live preview on the 320×240 ST7789 LCD via a new Camera page (app launcher icon)
+  - 新增“摄像头”页面，RGB565 320×240 实时画面显示在 320×240 ST7789 屏幕上（主界面应用图标进入）
+  - `esp_cam_sensor` component dependency and PSRAM enabled for frame buffers
+  - 引入 `esp_cam_sensor` 组件依赖并启用 PSRAM 用于帧缓冲
+
 - **Documentation / 文档完善**
   - English and Chinese README documentation for root project
   - 根项目的中英文 README 说明文档
@@ -24,6 +32,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - TinyUSB CDC virtual serial for debug logging — TinyUSB CDC 虚拟串口调试日志
   - Interactive demo UI with touch-responsive buttons — 交互式演示 UI，支持触摸按钮响应
   - Self-contained IDF project with sdkconfig.defaults and component dependencies — 独立的 IDF 工程，包含编译配置和依赖声明
+
+- **Documentation alignment / 文档对齐**
+  - Fixed stepper motor pin table in READMEs to match `feeder_motor.c` (EN:45, STEP:39, DIR:40, MS1:41, MS2:42, MS3:3)
+  - Fixed project structure trees to show README/CHANGELOG at repository root
+  - Corrected the motor dispensing description (FreeRTOS task + GPIO pulses, not GPTimer) in CHANGELOG and `feeder_motor.h`
+  - 修正两份 README 中的电机引脚表，使其与 `feeder_motor.c` 一致
+  - 修正项目结构树，将 README/CHANGELOG 移到仓库根目录
+  - 修正 CHANGELOG 与 `feeder_motor.h` 中关于出粮实现（GPTimer → FreeRTOS 任务 + GPIO 脉冲）的描述
+
+- **48-hour feeding cycle / 48 小时（两天）投喂周期**
+- **Day-interval schedules / 按间隔天数的投喂计划**
+  - Each schedule item now supports a repeat interval in days: feed at a fixed time (HH:MM) every day, every other day, every 3 days, etc. (up to 7 days)
+  - Day rotation is based on local calendar days (Beijing time); legacy 24-hour data and the intermediate per-cycle config are cleaned up automatically
+  - 每条计划支持按天间隔重复：在固定时间（时:分）投喂，可设为每天 / 隔 1 天 / 隔 2 天……（最长 7 天）
+  - 天数轮换依据本地自然日（北京时间），旧版 24 小时数据与中间版"每周期次数+间隔"配置自动清理
 
 ---
 
@@ -76,15 +99,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - SSID scanning and listing — SSID 扫描与列表
   - Password input with on-screen keyboard — 密码输入（屏幕键盘）
   - Connection status feedback — 连接状态反馈
-- **Feeding popup** — Animated overlay showing feeding progress with motor idle detection
-- **投喂弹窗** — 显示投喂进度的动画覆盖层，含电机空闲检测
+- **Feeding popup** — Overlay showing feeding progress with motor idle detection
+- **投喂弹窗** — 显示投喂进度的覆盖层，含电机空闲检测
 
 #### Motor & Feeding / 电机与投喂
 - **Stepper motor driver** (A4988) — GPIO-triggered step pulse generation
 - **步进电机驱动** (A4988) — GPIO 触发步进脉冲生成
-  - Asynchronous dispensing via GPTimer hardware timer — 通过 GPTimer 硬件定时器异步出粮
+  - Asynchronous dispensing via a dedicated FreeRTOS task with GPIO pulse generation — 通过专用 FreeRTOS 任务 + GPIO 忙等发脉冲异步出粮
   - Synchronous (blocking) dispensing for calibration — 同步（阻塞）出粮用于校准
-  - Configurable STEP/DIR/EN pins — 可配置 STEP/DIR/EN 引脚
+  - STEP/DIR/EN/MS pin definitions in `feeder_motor.c` — STEP/DIR/EN/MS 引脚定义于 `feeder_motor.c`
   - Idle state polling for completion detection — 空闲状态轮询检测完成
 - **Feeding schedule manager** — 投喂计划管理器
   - NVS-backed schedule storage (up to 8 items) — NVS 存储的计划数据（最多 8 项）

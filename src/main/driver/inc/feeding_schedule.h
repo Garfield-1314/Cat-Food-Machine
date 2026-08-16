@@ -9,26 +9,30 @@
 extern "C" {
 #endif
 
-#define MAX_SCHEDULE_ITEMS  8
+#define MAX_SCHEDULE_ITEMS  8   /* 最多计划条数 */
+#define MAX_EVERY_DAYS      7   /* 最大间隔天数（天） */
 
 /**
  * @brief 单个投喂计划项
+ *        在指定时间 (hour:minute) 每隔 every_days 天投喂一次。
+ *        every_days = 1 表示每天，2 表示隔 1 天，3 表示隔 2 天……
  */
 typedef struct {
-    uint8_t hour;       /* 小时 0-23 */
-    uint8_t minute;     /* 分钟 0-59 */
-    uint8_t amount;     /* 仓位数量 1-10 */
-    bool    enabled;    /* 是否启用 */
+    uint8_t hour;        /* 小时 0-23 */
+    uint8_t minute;      /* 分钟 0-59 */
+    uint8_t amount;      /* 每次投喂仓位数量 1-10 */
+    bool    enabled;     /* 是否启用 */
+    uint8_t every_days;  /* 每隔几天投喂 1-14 */
 } feed_schedule_item_t;
 
 /**
  * @brief 投喂触发回调函数类型
- * @param item 被触发的投喂计划项
+ * @param amount 本次投喂的仓位数量
  */
-typedef void (*feeding_callback_t)(const feed_schedule_item_t *item);
+typedef void (*feeding_callback_t)(uint8_t amount);
 
 /**
- * @brief 从 NVS 加载投喂计划
+ * @brief 从 NVS 加载投喂计划（不存在时使用默认空计划）
  * @return ESP_OK 成功，否则失败
  */
 esp_err_t feed_schedule_load(void);
@@ -76,9 +80,9 @@ esp_err_t feed_schedule_remove_item(int index);
 
 /**
  * @brief 启动投喂调度器后台任务
- *        每秒检查当前时间，如果匹配某个启用的投喂项，
- *        则调用注册的回调函数执行投喂。
- *        同一投喂项在1分钟内不会重复触发。
+ *        每秒检查当前时间，命中某条启用计划的投喂时间
+ *        （时间匹配且当天满足间隔天数轮换）时调用回调函数。
+ *        天数轮换依据本地自然日（北京时间）计算。
  *
  * @param cb 投喂触发回调函数 (不可为 NULL)
  */

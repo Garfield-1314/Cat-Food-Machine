@@ -8,7 +8,6 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "nvs_flash.h"
 #include "nvs.h"
 #include "lwip/err.h"
 #include "lwip/sys.h"
@@ -30,6 +29,7 @@ static const char *TAG = "wifi_app";
 static int s_retry_num = 0;
 static bool s_is_connected = false;
 static bool s_connecting = false;  /* 正在连接中 */
+static bool s_user_switch = false; /* 用户主动切换/断开引起的断开事件，抑制自动重试 */
 static char s_current_ssid[32] = {0};
 static wifi_connected_cb_t s_connected_cb = NULL;
 static esp_timer_handle_t s_retry_timer = NULL;
@@ -42,6 +42,8 @@ static void retry_timer_cb(void *arg)
     s_retry_num = 0;
     s_connecting = true;
     esp_wifi_connect();
+    /* 重新装载单次定时器，实现每 10 分钟重试一次 */
+    esp_timer_start_once(s_retry_timer, RETRY_TIMER_PERIOD_MS * 1000ULL);
 }
 
 static void stop_retry_timer(void)
@@ -76,7 +78,11 @@ static void event_handler(void *arg, esp_event_base_t event_base,
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         s_is_connected = false;
         s_connecting = false;
-        if (s_retry_num < WIFI_MAX_RETRY) {
+        if (s_user_switch) {
+            /* 用户主动切换/断开引起的事件：不自动重试，等用户重新发起连接 */
+            s_user_switch = false;
+            ESP_LOGI(TAG, "user-initiated disconnect, skip auto retry");
+        } else if (s_retry_num < WIFI_MAX_RETRY) {
             esp_wifi_connect();
             s_retry_num++;
             s_connecting = true;
@@ -86,6 +92,7 @@ static void event_handler(void *arg, esp_event_base_t event_base,
             start_retry_timer();
         }
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
+        s_user_switch = false;
         ESP_LOGI(TAG, "connected to AP");
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
@@ -104,13 +111,7 @@ static void event_handler(void *arg, esp_event_base_t event_base,
 
 void wifi_app_init(void)
 {
-    /* 初始化 NVS (如果尚未初始化) */
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
+    /* NVS 已在 user_component_init() 中统一初始化（含擦除重试），这里只依赖 nvs_open */
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -188,15 +189,20 @@ esp_err_t wifi_app_connect(const char *ssid, const char *password)
         return ESP_OK;
     }
 
-    /* 如果正在连接同一个 SSID，不需要重复 */
+    /* 正在连接同一个 SSID：用户再次点击说明想重试（如改对密码），打断旧尝试后重新发起 */
     if (s_connecting && strcmp(s_current_ssid, ssid) == 0) {
-        ESP_LOGI(TAG, "Already connecting to SSID: %s, skipping", ssid);
-        return ESP_OK;
+        ESP_LOGI(TAG, "Re-connecting to SSID: %s, restarting attempt", ssid);
+        s_user_switch = true;
+        esp_wifi_disconnect();
+        vTaskDelay(pdMS_TO_TICKS(100));
+        s_connecting = false;
+        s_retry_num = 0;
     }
 
     /* 如果已经连接到别的 WiFi，需要先断开 */
     if (s_is_connected || s_connecting) {
         ESP_LOGI(TAG, "Disconnecting from current AP before connecting to new one");
+        s_user_switch = true;
         esp_wifi_disconnect();
         vTaskDelay(pdMS_TO_TICKS(200));
         s_is_connected = false;
@@ -240,14 +246,83 @@ esp_err_t wifi_app_connect(const char *ssid, const char *password)
 void wifi_app_disconnect(void)
 {
     stop_retry_timer();
+    s_user_switch = true;
     esp_wifi_disconnect();
     s_is_connected = false;
+    s_connecting = false;
     memset(s_current_ssid, 0, sizeof(s_current_ssid));
+}
+
+esp_err_t wifi_app_scan(wifi_ap_info_t *results, uint16_t *count, uint16_t max_count)
+{
+    if (results == NULL || count == NULL || max_count == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    wifi_scan_config_t scan_cfg = {
+        .ssid = NULL,
+        .bssid = NULL,
+        .channel = 0,
+        .show_hidden = false,
+        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
+        .scan_time.active.min = 100,
+        .scan_time.active.max = 300,
+    };
+
+    esp_err_t ret = esp_wifi_scan_start(&scan_cfg, true);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Scan start failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    uint16_t ap_num = 0;
+    ret = esp_wifi_scan_get_ap_num(&ap_num);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Scan get_ap_num failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    if (ap_num > max_count) {
+        ap_num = max_count;
+    }
+
+    if (ap_num == 0) {
+        *count = 0;
+        return ESP_OK;
+    }
+
+    wifi_ap_record_t *aps = calloc(ap_num, sizeof(wifi_ap_record_t));
+    if (aps == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    ret = esp_wifi_scan_get_ap_records(&ap_num, aps);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Scan get_ap_records failed: %s", esp_err_to_name(ret));
+        free(aps);
+        return ret;
+    }
+
+    for (uint16_t i = 0; i < ap_num; i++) {
+        memcpy(results[i].ssid, aps[i].ssid, sizeof(aps[i].ssid));
+        results[i].ssid[sizeof(results[i].ssid) - 1] = '\0';
+        results[i].rssi = aps[i].rssi;
+        results[i].authmode = (uint8_t)aps[i].authmode;
+    }
+    *count = ap_num;
+
+    free(aps);
+    return ESP_OK;
 }
 
 bool wifi_app_is_connected(void)
 {
     return s_is_connected;
+}
+
+bool wifi_app_is_connecting(void)
+{
+    return s_connecting;
 }
 
 const char *wifi_app_get_ssid(void)

@@ -2,6 +2,7 @@
 
 #include "device/inc/gt911.h"
 #include "device/inc/st7789.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "lvgl.h"
 
@@ -29,21 +30,10 @@ static void lvgl_touch_read_cb(lv_indev_drv_t *indev_drv,
     tp_point_t p = gt911_get_point(&gt911_dev, 0);
     lv_point_t current_point;
   
-    // // 软件映射：物理短轴(Y)映射到屏幕长轴(X)，物理长轴(X)映射到屏幕短轴(Y)
-    // // 使用比例插值算法，不依赖触摸芯片的绝对坐标范围
-    // int16_t x_calc =  (((240 - p.y) * 320) / 240);
-    // int16_t y_calc = ((p.x * 240) / 320);
-
-    // if (x_calc < 0) x_calc = 0;
-    // if (x_calc > 319) x_calc = 319;
-    // if (y_calc < 0) y_calc = 0;
-    // if (y_calc > 239) y_calc = 239;
-
-    // current_point.x = x_calc;
-    // current_point.y = y_calc;
-
-    int16_t x_calc =  320 - p.y;
-    int16_t y_calc = p.x;
+    // 软件映射：物理短轴(Y)映射到屏幕长轴(X)，物理长轴(X)映射到屏幕短轴(Y)
+    // 使用比例插值算法，不依赖触摸芯片的绝对坐标范围
+    int16_t x_calc =  (((240 - p.y) * 320) / 240);
+    int16_t y_calc = ((p.x * 240) / 320);
 
     if (x_calc < 0) x_calc = 0;
     if (x_calc > 319) x_calc = 319;
@@ -52,6 +42,17 @@ static void lvgl_touch_read_cb(lv_indev_drv_t *indev_drv,
 
     current_point.x = x_calc;
     current_point.y = y_calc;
+
+    // int16_t x_calc =  320 - p.y;
+    // int16_t y_calc = p.x;
+
+    // if (x_calc < 0) x_calc = 0;
+    // if (x_calc > 319) x_calc = 319;
+    // if (y_calc < 0) y_calc = 0;
+    // if (y_calc > 239) y_calc = 239;
+
+    // current_point.x = x_calc;
+    // current_point.y = y_calc;
 
     // 触摸消抖逻辑
     if (!last_touch_state) {
@@ -84,10 +85,32 @@ static void lvgl_touch_read_cb(lv_indev_drv_t *indev_drv,
 }
 
 // 定义LVGL缓冲区 (32字节对齐以适配Cache/DMA)
-static lv_color_t lvgl_buf1[LCD_WIDTH * (LCD_HEIGHT / 4)]
-    __attribute__((aligned(32)));
-static lv_color_t lvgl_buf2[LCD_WIDTH * (LCD_HEIGHT / 4)]
-    __attribute__((aligned(32)));
+// 优先从 PSRAM 分配以释放内部 SRAM；失败时回退到内部 DMA 内存
+#define LVGL_BUF_SIZE (LCD_WIDTH * (LCD_HEIGHT / 4))
+static lv_color_t *lvgl_buf1 = NULL;
+static lv_color_t *lvgl_buf2 = NULL;
+
+static void alloc_lvgl_buffers(void)
+{
+  size_t buf_bytes = LVGL_BUF_SIZE * sizeof(lv_color_t);
+  lvgl_buf1 = heap_caps_aligned_alloc(32, buf_bytes,
+                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+  if (lvgl_buf1 == NULL) {
+    ESP_LOGE("lvgl", "PSRAM buf1 alloc failed, fallback to internal");
+    lvgl_buf1 = heap_caps_aligned_alloc(32, buf_bytes,
+                                        MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  }
+  lvgl_buf2 = heap_caps_aligned_alloc(32, buf_bytes,
+                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+  if (lvgl_buf2 == NULL) {
+    ESP_LOGE("lvgl", "PSRAM buf2 alloc failed, fallback to internal");
+    lvgl_buf2 = heap_caps_aligned_alloc(32, buf_bytes,
+                                        MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  }
+  if (lvgl_buf1 == NULL || lvgl_buf2 == NULL) {
+    ESP_LOGE("lvgl", "LVGL buffer allocation failed!");
+  }
+}
 
 // LCD传输完成回调
 static bool lcd_flush_ready_callback(void *user_ctx)
@@ -141,7 +164,7 @@ void user_lvgl_init(void)
   lcd_st7789_init();
 
   // LCD测试图案（验证硬件）
-  ST7789_test_pattern();
+  // ST7789_test_pattern();
 
   // 初始化LVGL核心
   lv_init();
@@ -162,9 +185,9 @@ void user_lvgl_init(void)
 
   // 设置显示缓冲区
   static lv_disp_draw_buf_t disp_buf;
+  alloc_lvgl_buffers();
   // 修复缓冲区大小参数，应与实际分配的大小一致
-  lv_disp_draw_buf_init(&disp_buf, lvgl_buf1, lvgl_buf2,
-                        LCD_WIDTH * (LCD_HEIGHT / 4));
+  lv_disp_draw_buf_init(&disp_buf, lvgl_buf1, lvgl_buf2, LVGL_BUF_SIZE);
   disp_drv.draw_buf = &disp_buf;
 
   // 注册显示驱动
