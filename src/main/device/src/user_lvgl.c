@@ -164,7 +164,7 @@ void user_lvgl_init(void)
   lcd_st7789_init();
 
   // LCD测试图案（验证硬件）
-  ST7789_test_pattern();
+  // ST7789_test_pattern();
 
   // 初始化LVGL核心
   lv_init();
