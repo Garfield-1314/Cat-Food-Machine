@@ -53,6 +53,12 @@ esp_err_t wifi_app_scan(wifi_ap_info_t *results, uint16_t *count, uint16_t max_c
 bool wifi_app_is_connected(void);
 
 /**
+ * @brief 获取当前是否正在连接中
+ * @return true 正在连接，false 空闲/已连接
+ */
+bool wifi_app_is_connecting(void);
+
+/**
  * @brief 获取当前连接的 SSID
  * @return SSID 字符串，未连接返回 NULL
  */

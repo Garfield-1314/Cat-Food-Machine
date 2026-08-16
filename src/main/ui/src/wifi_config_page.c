@@ -44,6 +44,11 @@ static bool s_scan_task_running = false;
 static lv_timer_t *scan_poll_timer = NULL;
 static bool s_manual_mode = false;
 
+/* 连接状态（由连接任务写入，轮询定时器展示） */
+static volatile esp_err_t s_connect_result = ESP_OK;
+static volatile bool s_connect_attempted = false;
+static lv_timer_t *status_poll_timer = NULL;
+
 /* 前向声明 */
 static void start_scan(void);
 static void rebuild_ap_list(void);
@@ -66,9 +71,14 @@ static void wifi_config_page_delete_cb(lv_event_t *e)
         lv_timer_del(scan_poll_timer);
         scan_poll_timer = NULL;
     }
+    if (status_poll_timer) {
+        lv_timer_del(status_poll_timer);
+        status_poll_timer = NULL;
+    }
     s_scan_done = false;
     s_scan_task_running = false;
     s_scan_count = 0;
+    s_connect_attempted = false;
 }
 
 /* 文本框聚焦时自动弹出键盘 */
@@ -96,10 +106,50 @@ static void wifi_connect_task(void *arg)
     char *cred = (char *)arg;
     const char *ssid = cred;
     const char *password = cred + strlen(cred) + 1;
-    wifi_app_connect(ssid, password);
+    s_connect_result = wifi_app_connect(ssid, password);
+    s_connect_attempted = true;
     vTaskDelay(pdMS_TO_TICKS(100));
     free(cred);
     vTaskDelete(NULL);
+}
+
+/* 状态轮询：连接成功后自动更新标签，避免一直停留在 "Connecting..." */
+static void status_poll_timer_cb(lv_timer_t *timer)
+{
+    (void)timer;
+    if (status_label == NULL) {
+        return;
+    }
+
+    if (wifi_app_is_connected()) {
+        char buf[48];
+        const char *ssid = wifi_app_get_ssid();
+        snprintf(buf, sizeof(buf), "Connected: %s", ssid ? ssid : "?");
+        lv_label_set_text(status_label, buf);
+        lv_obj_set_style_text_color(status_label, lv_color_hex(0x00FF00), 0);
+        s_connect_attempted = false;
+        return;
+    }
+
+    if (wifi_app_is_connecting()) {
+        lv_label_set_text(status_label, "Connecting...");
+        lv_obj_set_style_text_color(status_label, lv_color_hex(0xFFFF00), 0);
+        return;
+    }
+
+    if (s_connect_attempted) {
+        s_connect_attempted = false;
+        if (s_connect_result == ESP_OK) {
+            /* API 调用成功但连接最终失败（重试耗尽） */
+            lv_label_set_text(status_label, "Connection failed");
+        } else {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "Connect failed: %s",
+                     esp_err_to_name(s_connect_result));
+            lv_label_set_text(status_label, buf);
+        }
+        lv_obj_set_style_text_color(status_label, lv_color_hex(0xFF0000), 0);
+    }
 }
 
 /* 发起连接（凭据拷贝到堆上，避免切页后 textarea 缓冲失效） */
@@ -404,7 +454,7 @@ lv_obj_t *create_wifi_config_page(void)
     pass_ta = lv_textarea_create(manual_cont);
     lv_textarea_set_placeholder_text(pass_ta, "Enter WiFi password");
     lv_textarea_set_max_length(pass_ta, 63);
-    lv_textarea_set_password_mode(pass_ta, true);
+    lv_textarea_set_password_mode(pass_ta, false);
     lv_obj_set_size(pass_ta, 260, 35);
     lv_obj_align(pass_ta, LV_ALIGN_TOP_MID, 0, 60);
     lv_obj_set_style_text_color(pass_ta, lv_color_white(), 0);
@@ -438,6 +488,9 @@ lv_obj_t *create_wifi_config_page(void)
     lv_label_set_text(status_label, "");
     lv_obj_set_style_text_color(status_label, lv_color_white(), 0);
     lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID, 0, -10);
+
+    /* 连接状态轮询：连接成功/失败后自动更新底部标签 */
+    status_poll_timer = lv_timer_create(status_poll_timer_cb, 500, NULL);
 
     /* 键盘 (初始隐藏) */
     kb = lv_keyboard_create(wifi_config_page);

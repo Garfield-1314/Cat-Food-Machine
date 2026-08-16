@@ -4,6 +4,7 @@
 #include "device/inc/wifi_app.h"
 
 static bool s_connected = false;
+static bool s_connecting = false;
 static char s_ssid[33] = "SIM-WiFi";
 static char s_pass[65] = "";
 static wifi_connected_cb_t s_cb = NULL;
@@ -16,6 +17,7 @@ void wifi_app_init(void)
 
 esp_err_t wifi_app_connect(const char *ssid, const char *password)
 {
+    s_connecting = true;
     if (ssid) {
         strncpy(s_ssid, ssid, 32);
         s_ssid[32] = '\0';
@@ -25,17 +27,24 @@ esp_err_t wifi_app_connect(const char *ssid, const char *password)
         s_pass[64] = '\0';
     }
     s_connected = true;
+    s_connecting = false;
     return ESP_OK;
 }
 
 void wifi_app_disconnect(void)
 {
     s_connected = false;
+    s_connecting = false;
 }
 
 bool wifi_app_is_connected(void)
 {
     return s_connected;
+}
+
+bool wifi_app_is_connecting(void)
+{
+    return s_connecting;
 }
 
 const char *wifi_app_get_ssid(void)
