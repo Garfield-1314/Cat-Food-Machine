@@ -30,21 +30,10 @@ static void lvgl_touch_read_cb(lv_indev_drv_t *indev_drv,
     tp_point_t p = gt911_get_point(&gt911_dev, 0);
     lv_point_t current_point;
   
-    // // 软件映射：物理短轴(Y)映射到屏幕长轴(X)，物理长轴(X)映射到屏幕短轴(Y)
-    // // 使用比例插值算法，不依赖触摸芯片的绝对坐标范围
-    // int16_t x_calc =  (((240 - p.y) * 320) / 240);
-    // int16_t y_calc = ((p.x * 240) / 320);
-
-    // if (x_calc < 0) x_calc = 0;
-    // if (x_calc > 319) x_calc = 319;
-    // if (y_calc < 0) y_calc = 0;
-    // if (y_calc > 239) y_calc = 239;
-
-    // current_point.x = x_calc;
-    // current_point.y = y_calc;
-
-    int16_t x_calc =  320 - p.y;
-    int16_t y_calc = p.x;
+    // 软件映射：物理短轴(Y)映射到屏幕长轴(X)，物理长轴(X)映射到屏幕短轴(Y)
+    // 使用比例插值算法，不依赖触摸芯片的绝对坐标范围
+    int16_t x_calc =  (((240 - p.y) * 320) / 240);
+    int16_t y_calc = ((p.x * 240) / 320);
 
     if (x_calc < 0) x_calc = 0;
     if (x_calc > 319) x_calc = 319;
@@ -53,6 +42,17 @@ static void lvgl_touch_read_cb(lv_indev_drv_t *indev_drv,
 
     current_point.x = x_calc;
     current_point.y = y_calc;
+
+    // int16_t x_calc =  320 - p.y;
+    // int16_t y_calc = p.x;
+
+    // if (x_calc < 0) x_calc = 0;
+    // if (x_calc > 319) x_calc = 319;
+    // if (y_calc < 0) y_calc = 0;
+    // if (y_calc > 239) y_calc = 239;
+
+    // current_point.x = x_calc;
+    // current_point.y = y_calc;
 
     // 触摸消抖逻辑
     if (!last_touch_state) {
