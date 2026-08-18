@@ -165,7 +165,6 @@ void user_component_init(void)
     tusb_serial_init();
     vTaskDelay(pdMS_TO_TICKS(1000));
     user_lvgl_init();
-    create_ui();
 
     /* 初始化步进电机 (A4988) */
     feeder_motor_init();
@@ -175,8 +174,11 @@ void user_component_init(void)
     if (cam_err != ESP_OK) {
         ESP_LOGW(TAG, "OV2640 camera init failed: %s", esp_err_to_name(cam_err));
     } else {
-        ESP_LOGI(TAG, "OV2640 camera ready (enter Camera page to start stream)");
+        ESP_LOGI(TAG, "OV2640 camera ready; starting the default camera page");
     }
+
+    /* 摄像头初始化完成后，开机直接进入摄像头画面 */
+    create_ui();
 
     /* 从 NVS 加载投喂计划配置 */
     esp_err_t sched_err = feed_schedule_load();

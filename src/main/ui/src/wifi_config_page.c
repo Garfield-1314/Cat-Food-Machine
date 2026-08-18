@@ -190,6 +190,7 @@ static void start_connect(const char *ssid, const char *password)
 static void connect_btn_cb(lv_event_t *e)
 {
     (void)e;
+
     const char *password = lv_textarea_get_text(pass_ta);
     start_connect(s_connect_ssid, password);
 }

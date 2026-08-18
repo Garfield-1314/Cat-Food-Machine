@@ -112,26 +112,23 @@ static esp_err_t sensor_sccb_init(void)
   return ESP_OK;
 }
 
-/* 在 sensor 支持格式中查找 RGB565，构造 320x240 自定义格式 */
+/* 查找 ESP32-S3-EYE 支持的原生 RGB565 240x240 格式 */
 static esp_err_t sensor_set_format(void)
 {
   esp_cam_sensor_format_array_t fmt_array = {0};
   ESP_RETURN_ON_ERROR(esp_cam_sensor_query_format(s_sensor, &fmt_array), TAG,
                       "query format failed");
 
-  esp_cam_sensor_format_t custom = {0};
+  esp_cam_sensor_format_t selected = {0};
   bool found = false;
   for (int i = 0; i < fmt_array.count; i++) {
     const esp_cam_sensor_format_t *f = &fmt_array.format_array[i];
     ESP_LOGI(TAG, "fmt[%d]: %s", i, f->name);
-    if (f->format == ESP_CAM_SENSOR_PIXFORMAT_RGB565 && !found) {
-      /* 复用 RGB565 寄存器表，覆盖输出尺寸为 320x240
-         （ov2640 驱动 set_format 内部会调用 set_outsize） */
-      custom = *f;
-      custom.width = CAM_OUTPUT_WIDTH;
-      custom.height = CAM_OUTPUT_HEIGHT;
-      custom.name = "DVP_8bit_20Minput_RGB565_LE_320x240_custom";
+    if (f->format == ESP_CAM_SENSOR_PIXFORMAT_RGB565 &&
+        f->width == CAM_OUTPUT_WIDTH && f->height == CAM_OUTPUT_HEIGHT) {
+      selected = *f;
       found = true;
+      break;
     }
   }
   if (!found) {
@@ -139,12 +136,12 @@ static esp_err_t sensor_set_format(void)
     return ESP_ERR_NOT_SUPPORTED;
   }
 
-  esp_err_t ret = esp_cam_sensor_set_format(s_sensor, &custom);
+  esp_err_t ret = esp_cam_sensor_set_format(s_sensor, &selected);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "set format failed: %s", esp_err_to_name(ret));
     return ret;
   }
-  ESP_LOGI(TAG, "format in use: %s", custom.name);
+  ESP_LOGI(TAG, "format in use: %s", selected.name);
   return ESP_OK;
 }
 
@@ -152,13 +149,12 @@ esp_err_t ov2640_camera_init(void)
 {
   esp_err_t ret = ESP_OK;
 
-  /* ---------- 1. SCCB + 传感器检测 ---------- */
-  ret = sensor_sccb_init();
-  if (ret != ESP_OK) {
-    return ret;
-  }
-
-  /* ---------- 2. DVP 控制器 ---------- */
+  /* ---------- 1. DVP 控制器 ----------
+   *
+   * esp_cam_new_dvp_ctlr() starts the XCLK output on CAM_DVP_XCLK_IO.
+   * OV2640 SCCB detection must happen after this, otherwise the sensor has
+   * no clock and normally cannot acknowledge on the SCCB bus.
+   */
   esp_cam_ctlr_dvp_pin_config_t pin_cfg = {
       .data_width = 8,
       .data_io = {CAM_DVP_D0_IO, CAM_DVP_D1_IO, CAM_DVP_D2_IO, CAM_DVP_D3_IO,
@@ -178,15 +174,15 @@ esp_err_t ov2640_camera_init(void)
       .dma_burst_size = 64,
       .pin = &pin_cfg,
       .bk_buffer_dis = 1,
-      /* 输出大端 RGB565 以匹配 LCD / LVGL（LV_COLOR_16_SWAP） */
-      .byte_swap_en = 1,
+      /* 与 ESP32-S3-EYE 官方例程一致，关闭 DVP 字节交换 */
+      .byte_swap_en = 0,
       .xclk_freq = CAM_XCLK_FREQ_HZ,
   };
 
   ret = esp_cam_new_dvp_ctlr(&dvp_config, &s_cam_handle);
   ESP_RETURN_ON_ERROR(ret, TAG, "dvp controller init failed");
 
-  /* ---------- 3. 分配帧缓冲（双缓冲，优先 PSRAM） ---------- */
+  /* ---------- 2. 分配帧缓冲（双缓冲，优先 PSRAM） ---------- */
   uint32_t caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA;
   for (int i = 0; i < 2; i++) {
     s_buf[i] = esp_cam_ctlr_alloc_buffer(s_cam_handle, CAM_FRAME_BYTES, caps);
@@ -199,6 +195,12 @@ esp_err_t ov2640_camera_init(void)
       ESP_LOGE(TAG, "frame buffer %d alloc failed", i);
       return ESP_ERR_NO_MEM;
     }
+  }
+
+  /* ---------- 3. SCCB + 传感器检测 ---------- */
+  ret = sensor_sccb_init();
+  if (ret != ESP_OK) {
+    return ret;
   }
 
   /* ---------- 4. 设置传感器输出格式 ---------- */
@@ -230,16 +232,17 @@ esp_err_t ov2640_camera_start(void)
     return ESP_OK;
   }
 
-  esp_err_t ret = esp_cam_ctlr_enable(s_cam_handle);
-  ESP_RETURN_ON_ERROR(ret, TAG, "ctrlr enable failed");
-
-  /* 启动传感器数据流 */
+  /* 按官方例程先让传感器开始输出，再启动 DVP 控制器 */
   int enable = 1;
-  ret = esp_cam_sensor_ioctl(s_sensor, ESP_CAM_SENSOR_IOC_S_STREAM, &enable);
+  esp_err_t ret = esp_cam_sensor_ioctl(s_sensor, ESP_CAM_SENSOR_IOC_S_STREAM,
+                                       &enable);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "sensor stream start failed");
     return ret;
   }
+
+  ret = esp_cam_ctlr_enable(s_cam_handle);
+  ESP_RETURN_ON_ERROR(ret, TAG, "ctrlr enable failed");
 
   ret = esp_cam_ctlr_start(s_cam_handle);
   if (ret != ESP_OK) {

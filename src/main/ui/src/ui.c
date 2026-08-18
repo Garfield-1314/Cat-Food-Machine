@@ -46,6 +46,7 @@ void switch_page_cb(lv_event_t *e)
 
 void create_ui(void)
 {
+  /* 开机默认显示主界面 */
   lv_obj_t *page = create_app_page();
   lv_scr_load(page);
 }

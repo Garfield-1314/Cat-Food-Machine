@@ -193,16 +193,26 @@ void user_lvgl_init(void)
   // 注册显示驱动
   lv_disp_drv_register(&disp_drv);
 
-  // 初始化GT911触摸芯片
+  /* Cat board GT911 configuration (active) */
   gt911_init_default(&gt911_dev);
-  // 触摸屏物理分辨率为 240x320，需要进行软件映射
   gt911_set_resolution(&gt911_dev, LCD_HEIGHT, LCD_WIDTH);
   gt911_set_rotation(&gt911_dev, ROTATION_INVERTED);
 
-  // 初始化LVGL输入设备驱动
   static lv_indev_drv_t indev_drv;
   lv_indev_drv_init(&indev_drv);
   indev_drv.type = LV_INDEV_TYPE_POINTER;
   indev_drv.read_cb = lvgl_touch_read_cb;
   lv_indev_drv_register(&indev_drv);
+
+  /* ESP32-S3-EYE test: no external GT911; GPIO21 is LCD CLK.
+  gt911_init_default(&gt911_dev);
+  gt911_set_resolution(&gt911_dev, LCD_HEIGHT, LCD_WIDTH);
+  gt911_set_rotation(&gt911_dev, ROTATION_INVERTED);
+
+  static lv_indev_drv_t indev_drv;
+  lv_indev_drv_init(&indev_drv);
+  indev_drv.type = LV_INDEV_TYPE_POINTER;
+  indev_drv.read_cb = lvgl_touch_read_cb;
+  lv_indev_drv_register(&indev_drv);
+  */
 }
