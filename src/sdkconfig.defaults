@@ -1,12 +1,16 @@
 # Set target chip
 CONFIG_IDF_TARGET="esp32s3"
 
-# 板载无八线 PSRAM（GPIO35/36/37 被 LCD 占用），关闭之；如后续更换带 PSRAM 的板再改回
+# ESP32-S3-EYE: enable Octal PSRAM.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+# Previous custom board: comment the two lines above and use:
 # CONFIG_SPIRAM is not set
 
 # OV2640 camera
 CONFIG_CAMERA_OV2640=y
-CONFIG_CAMERA_OV2640_DVP_RGB565_640X480_6FPS=y
+# ESP32-S3-EYE native camera format
+CONFIG_CAMERA_OV2640_DVP_RGB565_240X240_25FPS=y
 
 # Use large single-app partition (2MB factory partition)
 CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y

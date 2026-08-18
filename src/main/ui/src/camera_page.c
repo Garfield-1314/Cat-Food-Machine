@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "ui/inc/ui.h"
 #include "device/inc/ov2640.h"
+#include "device/inc/st7789.h"
 
 static const char *TAG = "camera_page";
 
@@ -73,9 +74,10 @@ lv_obj_t *create_camera_page(void)
     lv_obj_set_style_bg_color(camera_page, lv_color_hex(0x000000), LV_PART_MAIN);
 
     if (cam_ready) {
-        /* 全屏摄像头画面（320x240 填满整个屏幕） */
+        /* 240x240 摄像头画面居中显示在 320x240 LCD 上 */
         cam_img = lv_img_create(camera_page);
-        lv_obj_set_pos(cam_img, 0, 0);
+        lv_obj_set_pos(cam_img, (LCD_WIDTH - CAM_OUTPUT_WIDTH) / 2,
+                       (LCD_HEIGHT - CAM_OUTPUT_HEIGHT) / 2);
         lv_img_set_src(cam_img, NULL);
 
         refresh_timer = lv_timer_create(camera_refresh_cb, 40, NULL);

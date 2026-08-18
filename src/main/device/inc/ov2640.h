@@ -29,8 +29,8 @@ extern "C" {
 
 #define CAM_XCLK_FREQ_HZ   (20 * 1000 * 1000)
 
-/* 摄像头输出分辨率（RGB565） */
-#define CAM_OUTPUT_WIDTH   320
+/* ESP32-S3-EYE 官方 OV2640 格式：RGB565 240x240 */
+#define CAM_OUTPUT_WIDTH   240
 #define CAM_OUTPUT_HEIGHT  240
 
 /**

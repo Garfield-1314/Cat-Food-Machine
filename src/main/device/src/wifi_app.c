@@ -14,6 +14,13 @@
 
 static const char *TAG = "wifi_app";
 
+/*
+ * 调试用 WiFi 配置：默认留空，使用 NVS 配置。
+ * 填写 test_ssid 后，开机直接使用该 SSID/密码连接，不读取 NVS。
+ */
+static const char test_ssid[] = "singtown_us";
+static const char test_key[] = "zhizhiyuanyuan";
+
 /* NVS key for WiFi config */
 #define NVS_NAMESPACE  "wifi_config"
 #define NVS_KEY_SSID   "wifi_ssid"
@@ -135,12 +142,27 @@ void wifi_app_init(void)
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
 
-    /* 尝试从 NVS 读取已保存的 WiFi 配置，在 start 之前设置 */
+    /* 调试配置优先；为空时才从 NVS 读取已保存的 WiFi 配置 */
     char saved_ssid[32] = {0};
     char saved_pass[64] = {0};
-    bool has_saved_config = wifi_app_load_config(saved_ssid, saved_pass);
+    bool has_test_config = (test_ssid[0] != '\0');
+    bool has_saved_config = false;
+    const char *connect_ssid = NULL;
+    const char *connect_password = NULL;
 
-    if (has_saved_config) {
+    if (has_test_config) {
+        connect_ssid = test_ssid;
+        connect_password = test_key;
+        ESP_LOGI(TAG, "Debug WiFi config enabled, skipping NVS load");
+    } else {
+        has_saved_config = wifi_app_load_config(saved_ssid, saved_pass);
+        if (has_saved_config) {
+            connect_ssid = saved_ssid;
+            connect_password = saved_pass;
+        }
+    }
+
+    if (has_test_config || has_saved_config) {
         /* 在 start 之前设置好配置，start 后不会触发 WIFI_EVENT_STA_START 自动连接 */
         wifi_config_t wifi_config = {
             .sta = {
@@ -148,18 +170,20 @@ void wifi_app_init(void)
                 .sae_pwe_h2e = WPA3_SAE_PWE_BOTH,
             },
         };
-        strncpy((char *)wifi_config.sta.ssid, saved_ssid, sizeof(wifi_config.sta.ssid) - 1);
-        strncpy((char *)wifi_config.sta.password, saved_pass, sizeof(wifi_config.sta.password) - 1);
+        strncpy((char *)wifi_config.sta.ssid, connect_ssid,
+                sizeof(wifi_config.sta.ssid) - 1);
+        strncpy((char *)wifi_config.sta.password, connect_password,
+                sizeof(wifi_config.sta.password) - 1);
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
 
-        strncpy(s_current_ssid, saved_ssid, sizeof(s_current_ssid) - 1);
+        strncpy(s_current_ssid, connect_ssid, sizeof(s_current_ssid) - 1);
         s_current_ssid[sizeof(s_current_ssid) - 1] = '\0';
     }
 
     /* 启动 WiFi */
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    if (has_saved_config) {
+    if (has_test_config || has_saved_config) {
         /* 配置已在 start 之前设置，这里主动发起连接 */
         esp_err_t ret = esp_wifi_connect();
         if (ret != ESP_OK) {
@@ -167,7 +191,8 @@ void wifi_app_init(void)
         } else {
             s_retry_num = 0;
             s_connecting = true;
-            ESP_LOGI(TAG, "Found saved WiFi config, auto-connecting to SSID: %s", saved_ssid);
+            ESP_LOGI(TAG, "%s WiFi config, auto-connecting to SSID: %s",
+                     has_test_config ? "Debug" : "Saved", connect_ssid);
         }
     } else {
         ESP_LOGI(TAG, "No saved WiFi config, waiting for user to configure");
