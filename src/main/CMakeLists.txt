@@ -10,16 +10,13 @@ SRCS "main.c"
 "device/src/wifi_app.c"
 "device/src/sntp_time.c"
 "device/src/ov2640.c"
-"device/src/video_frame.c"
 "device/src/video_stream.c"
-"device/src/jpeg_preview.c"
 
 "ui/src/ui.c"
 "ui/src/app_page.c"
 "ui/src/setting_page.c"
 "ui/src/wifi_config_page.c"
 "ui/src/feeding_page.c"
-"ui/src/camera_page.c"
 
                     INCLUDE_DIRS "."
                     REQUIRES esp_lcd esp_driver_i2c esp_driver_cam esp_driver_jpeg esp_http_server nvs_flash esp_timer esp_wifi esp_netif esp_event lwip

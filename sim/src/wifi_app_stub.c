@@ -52,6 +52,11 @@ const char *wifi_app_get_ssid(void)
     return s_ssid;
 }
 
+const char *wifi_app_get_ip(void)
+{
+    return s_connected ? "192.168.1.100" : NULL;
+}
+
 void wifi_app_register_connected_cb(wifi_connected_cb_t cb)
 {
     s_cb = cb;

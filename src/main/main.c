@@ -179,10 +179,9 @@ void user_component_init(void)
     if (cam_err != ESP_OK) {
         ESP_LOGW(TAG, "OV2640 camera init failed: %s", esp_err_to_name(cam_err));
     } else {
-        ESP_LOGI(TAG, "OV2640 camera ready; starting the default camera page");
+        ESP_LOGI(TAG, "OV2640 camera ready (LAN web preview only)");
     }
 
-    /* 摄像头初始化完成后，开机直接进入摄像头画面 */
     create_ui();
 
     /* 从 NVS 加载投喂计划配置 */

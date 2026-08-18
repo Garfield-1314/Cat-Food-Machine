@@ -6,7 +6,6 @@
 #include "ui/inc/setting_page.h"
 #include "ui/inc/wifi_config_page.h"
 #include "ui/inc/feeding_page.h"
-#include "ui/inc/camera_page.h"
 
 // 通用消抖函数
 bool check_debounce(uint32_t *last_time, uint32_t debounce_ms)
@@ -35,8 +34,6 @@ void switch_page_cb(lv_event_t *e)
     target = create_wifi_config_page();
   } else if (strcmp(page_name, "feeding_page") == 0) {
     target = create_feeding_page();
-  } else if (strcmp(page_name, "camera_page") == 0) {
-    target = create_camera_page();
   }
 
   if (target) {

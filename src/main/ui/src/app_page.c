@@ -21,6 +21,51 @@ static lv_obj_t *wifi_icon_label = NULL;
 static lv_obj_t *ip_label = NULL;
 static lv_obj_t *feed_confirm_dlg = NULL;
 
+/* Web 推流地址提示（无本地预览，仅局域网网页查看） */
+static lv_obj_t *stream_hint = NULL;
+
+static void stream_hint_close_cb(lv_timer_t *timer)
+{
+  (void)timer;
+  if (stream_hint) {
+    lv_obj_del(stream_hint);
+    stream_hint = NULL;
+  }
+}
+
+static void camera_stream_hint_cb(lv_event_t *e)
+{
+  (void)e;
+  if (stream_hint) {
+    lv_obj_del(stream_hint);
+    stream_hint = NULL;
+  }
+
+  stream_hint = lv_obj_create(lv_layer_top());
+  lv_obj_set_size(stream_hint, 260, 90);
+  lv_obj_center(stream_hint);
+  lv_obj_set_style_bg_color(stream_hint, lv_color_hex(0x001a27), 0);
+  lv_obj_set_style_bg_opa(stream_hint, 235, 0);
+  lv_obj_set_style_border_width(stream_hint, 2, 0);
+  lv_obj_set_style_border_color(stream_hint, lv_color_hex(0x00AA00), 0);
+  lv_obj_set_style_radius(stream_hint, 10, 0);
+  lv_obj_set_style_pad_all(stream_hint, 12, 0);
+
+  lv_obj_t *label = lv_label_create(stream_hint);
+  const char *ip = wifi_app_get_ip();
+  if (ip != NULL) {
+    lv_label_set_text_fmt(label, "Web preview:\nhttp://%s/", ip);
+  } else {
+    lv_label_set_text(label, "Web preview:\nWiFi not connected");
+  }
+  lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(label, lv_color_white(), 0);
+  lv_obj_center(label);
+
+  lv_timer_t *t = lv_timer_create(stream_hint_close_cb, 3000, NULL);
+  lv_timer_set_repeat_count(t, 1);
+}
+
 static void update_next_feed_label(void)
 {
   if (next_feed_label == NULL) {
@@ -273,15 +318,15 @@ lv_obj_t *create_app_page(void)
   lv_obj_add_event_cb(feed_btn, switch_page_cb, LV_EVENT_CLICKED,
                       "feeding_page");
 
-  // 摄像头应用图标
+  // 摄像头应用图标：无本地预览，点击提示 Web 推流地址
   lv_obj_t *camera_btn = lv_btn_create(app_page);
   lv_obj_set_size(camera_btn, 60, 60);
   lv_obj_align(camera_btn, LV_ALIGN_BOTTOM_MID, 38, -15);
   lv_obj_t *camera_btn_label = lv_label_create(camera_btn);
   lv_label_set_text(camera_btn_label, LV_SYMBOL_IMAGE);
   lv_obj_center(camera_btn_label);
-  lv_obj_add_event_cb(camera_btn, switch_page_cb, LV_EVENT_CLICKED,
-                      "camera_page");
+  lv_obj_add_event_cb(camera_btn, camera_stream_hint_cb, LV_EVENT_CLICKED,
+                      NULL);
 
   // 设置功能按钮（圆形图标）
   lv_obj_t *settings_btn = lv_btn_create(app_page);

@@ -31,7 +31,8 @@
 #define LV_DPI_DEF 130
 
 /* ================ 内置字体 ================ */
-/* UI 使用了 montserrat 12 / 14 / 18 */
+/* UI 使用了 montserrat 10 / 12 / 14 / 18 */
+#define LV_FONT_MONTSERRAT_10 1
 #define LV_FONT_MONTSERRAT_12 1
 #define LV_FONT_MONTSERRAT_14 1
 #define LV_FONT_MONTSERRAT_16 1

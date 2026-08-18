@@ -7,6 +7,7 @@
 #include "esp_cam_ctlr_dvp.h"
 #include "esp_cam_sensor.h"
 #include "esp_cam_sensor_detect.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_sccb_i2c.h"
 #include "esp_sccb_intf.h"
@@ -24,9 +25,9 @@ static esp_cam_sensor_device_t *s_sensor = NULL;
 static i2c_master_bus_handle_t s_i2c_bus = NULL;
 static esp_sccb_io_handle_t s_sccb_io = NULL;
 
-/* 双缓冲：一块正在被 DMA 写入，另一块是最近完成的完整帧 */
-static uint8_t *s_buf[2] = {NULL, NULL};
-static volatile int s_next_idx = 0;
+/* 单帧缓冲：内部 SRAM 有限（本板无可用 PSRAM），省一半帧缓冲。
+ * 帧在采集期间可能被 DMA 覆盖，消费方（HTTP 推流）直接引用该缓冲。 */
+static uint8_t *s_buf = NULL;
 static volatile int s_latest_idx = -1;
 static volatile size_t s_latest_size = 0;
 static volatile uint32_t s_latest_seq = 0;
@@ -42,9 +43,7 @@ static bool cam_get_new_trans(esp_cam_ctlr_handle_t handle,
 {
   (void)handle;
   (void)user_data;
-  int i = s_next_idx;
-  s_next_idx = (s_next_idx + 1) % 2;
-  trans->buffer = s_buf[i];
+  trans->buffer = s_buf;
   trans->buflen = CAM_FRAME_BYTES;
   return false;
 }
@@ -54,14 +53,11 @@ static bool cam_trans_finished(esp_cam_ctlr_handle_t handle,
 {
   (void)handle;
   (void)user_data;
-  for (int i = 0; i < 2; i++) {
-    if (trans->buffer == s_buf[i]) {
-      s_latest_seq++;
-      s_latest_size = trans->received_size;
-      s_latest_idx = i;
-      s_latest_seq++;
-      break;
-    }
+  if (trans->buffer == s_buf) {
+    s_latest_seq++;
+    s_latest_size = trans->received_size;
+    s_latest_idx = 0;
+    s_latest_seq++;
   }
   return false;
 }
@@ -198,22 +194,9 @@ esp_err_t ov2640_camera_init(void)
   ret = esp_cam_new_dvp_ctlr(&dvp_config, &s_cam_handle);
   ESP_RETURN_ON_ERROR(ret, TAG, "dvp controller init failed");
 
-  /* ---------- 2. 分配帧缓冲（双缓冲，优先 PSRAM） ---------- */
-  uint32_t caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA;
-  for (int i = 0; i < 2; i++) {
-    s_buf[i] = esp_cam_ctlr_alloc_buffer(s_cam_handle, CAM_FRAME_BYTES, caps);
-    if (s_buf[i] == NULL) {
-      ESP_LOGW(TAG, "PSRAM buffer %d alloc failed, try internal", i);
-      caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA;
-      s_buf[i] = esp_cam_ctlr_alloc_buffer(s_cam_handle, CAM_FRAME_BYTES, caps);
-    }
-    if (s_buf[i] == NULL) {
-      ESP_LOGE(TAG, "frame buffer %d alloc failed", i);
-      return ESP_ERR_NO_MEM;
-    }
-  }
+  /* 帧缓冲延迟到首次采集时分配（内部 SRAM 有限，不采集时不占用） */
 
-  /* ---------- 3. SCCB + 传感器检测 ---------- */
+  /* ---------- 2. SCCB + 传感器检测 ---------- */
   ret = sensor_sccb_init();
   if (ret != ESP_OK) {
     return ret;
@@ -239,6 +222,39 @@ esp_err_t ov2640_camera_init(void)
   return ESP_OK;
 }
 
+/* 首次启动时分配帧缓冲；无 PSRAM 时回退到内部 SRAM */
+static esp_err_t cam_alloc_frame_buffers(void)
+{
+  if (s_buf != NULL) {
+    return ESP_OK;
+  }
+
+  uint32_t caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA;
+  s_buf = esp_cam_ctlr_alloc_buffer(s_cam_handle, CAM_FRAME_BYTES, caps);
+  if (s_buf == NULL) {
+    ESP_LOGW(TAG, "PSRAM frame buffer alloc failed, try internal");
+    s_buf = esp_cam_ctlr_alloc_buffer(s_cam_handle, CAM_FRAME_BYTES,
+                                      MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  }
+  if (s_buf == NULL) {
+    ESP_LOGE(TAG, "frame buffer alloc failed");
+    return ESP_ERR_NO_MEM;
+  }
+  ESP_LOGI(TAG, "frame buffer allocated (%d bytes)", CAM_FRAME_BYTES);
+  return ESP_OK;
+}
+
+static void cam_free_frame_buffers(void)
+{
+  if (s_buf != NULL) {
+    heap_caps_free(s_buf);
+    s_buf = NULL;
+  }
+  s_latest_idx = -1;
+  s_latest_size = 0;
+  s_latest_seq = 0;
+}
+
 esp_err_t ov2640_camera_start(void)
 {
   if (!s_ready || s_cam_handle == NULL) {
@@ -248,10 +264,16 @@ esp_err_t ov2640_camera_start(void)
     return ESP_OK;
   }
 
+  /* 首次启动时分配帧缓冲（内部 SRAM 有限，不采集时不占用） */
+  esp_err_t ret = cam_alloc_frame_buffers();
+  if (ret != ESP_OK) {
+    return ret;
+  }
+
   /* 按官方例程先让传感器开始输出，再启动 DVP 控制器 */
   int enable = 1;
-  esp_err_t ret = esp_cam_sensor_ioctl(s_sensor, ESP_CAM_SENSOR_IOC_S_STREAM,
-                                       &enable);
+  ret = esp_cam_sensor_ioctl(s_sensor, ESP_CAM_SENSOR_IOC_S_STREAM,
+                             &enable);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "sensor stream start failed");
     return ret;
@@ -269,7 +291,6 @@ esp_err_t ov2640_camera_start(void)
   s_latest_idx = -1;
   s_latest_size = 0;
   s_latest_seq = 0;
-  s_next_idx = 0;
   s_running = true;
   ESP_LOGI(TAG, "camera stream started");
   return ESP_OK;
@@ -308,6 +329,8 @@ esp_err_t ov2640_camera_stop(void)
     s_running = false;
     ESP_LOGI(TAG, "camera stream stopped");
   }
+  /* 无使用者后释放帧缓冲，归还内部 SRAM */
+  cam_free_frame_buffers();
   return ESP_OK;
 }
 
@@ -362,7 +385,7 @@ const uint8_t *ov2640_camera_get_jpeg_frame(size_t *size, int *w, int *h)
     return NULL;
   }
   if (size) *size = latest_size;
-  return s_buf[latest_idx];
+  return s_buf;
 }
 
 bool ov2640_camera_is_ready(void)

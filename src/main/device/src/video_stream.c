@@ -2,7 +2,7 @@
 
 #include <stdio.h>
 
-#include "device/inc/video_frame.h"
+#include "device/inc/ov2640.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -76,12 +76,10 @@ static esp_err_t stream_handler(httpd_req_t *req)
     }
 
     esp_err_t ret = ESP_OK;
-    video_frame_t *frame = NULL;
 
-    ret = video_frame_create(&frame);
+    ret = ov2640_camera_acquire();
     if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "failed to create video frame reader: %s",
-                 esp_err_to_name(ret));
+        ESP_LOGW(TAG, "failed to acquire camera: %s", esp_err_to_name(ret));
         ret = send_stream_error(req, "503 Service Unavailable",
                                 "Camera is unavailable");
         goto cleanup;
@@ -98,14 +96,11 @@ static esp_err_t stream_handler(httpd_req_t *req)
     while (true) {
         const uint8_t *jpeg_data = NULL;
         size_t jpeg_size = 0;
-        ret = video_frame_get_jpeg(frame, &jpeg_data, &jpeg_size);
-        if (ret == ESP_ERR_NOT_FOUND) {
+        /* 直接引用相机帧缓冲（单缓冲），省去拷贝；覆盖窗口极小可接受 */
+        jpeg_data = ov2640_camera_get_jpeg_frame(&jpeg_size, NULL, NULL);
+        if (jpeg_data == NULL || jpeg_size == 0) {
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
-        }
-        if (ret != ESP_OK) {
-            ESP_LOGW(TAG, "video stream stopped: %s", esp_err_to_name(ret));
-            break;
         }
 
         char part_header[128];
@@ -131,7 +126,7 @@ static esp_err_t stream_handler(httpd_req_t *req)
     }
 
 cleanup:
-    video_frame_destroy(frame);
+    ov2640_camera_release();
     stream_client_release();
     return ret;
 }
