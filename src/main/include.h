@@ -12,6 +12,7 @@
 #include "device/inc/wifi_app.h"
 #include "device/inc/sntp_time.h"
 #include "device/inc/ov2640.h"
+#include "device/inc/video_stream.h"
 
 #include "ui/inc/ui.h"
 

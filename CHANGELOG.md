@@ -14,10 +14,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **OV2640 Camera / OV2640 摄像头**
   - DVP 8-bit parallel interface with SCCB on dedicated I2C_NUM_1 (pins D0-D7: 11,9,8,10,12,18,17,16; VSYNC:6, DE:7, PCLK:13, XCLK:15, SCCB SCL:5, SDA:4)
   - DVP 8-bit 并行接口，SCCB 使用独立 I2C_NUM_1 总线（D0-D7: 11,9,8,10,12,18,17,16；VSYNC:6、DE:7、PCLK:13、XCLK:15、SCCB SCL:5、SDA:4）
-  - RGB565 320×240 live preview on the 320×240 ST7789 LCD via a new Camera page (app launcher icon)
-  - 新增“摄像头”页面，RGB565 320×240 实时画面显示在 320×240 ST7789 屏幕上（主界面应用图标进入）
+  - Native JPEG 320×240 capture with ROM JPEG decoding to RGB565 for the 320×240 ST7789 LCD
+  - 使用原生 JPEG 320×240 采集，并通过 ESP32-S3 ROM JPEG 解码器转换为 RGB565 显示到 320×240 ST7789 屏幕
+  - New Camera page, opened from the camera icon on the feeding home page
+  - 新增“摄像头”页面，可从投喂主页的摄像头图标进入
   - `esp_cam_sensor` component dependency and PSRAM enabled for frame buffers
   - 引入 `esp_cam_sensor` 组件依赖并启用 PSRAM 用于帧缓冲
+
+- **On-demand LAN video streaming / 局域网按需视频推流**
+  - Added a modular `esp_http_server` HTTP-MJPEG service with `/` browser page and `/stream` endpoint
+  - 新增模块化 `esp_http_server` HTTP-MJPEG 服务，提供 `/` 浏览页面和 `/stream` 推流接口
+  - HTTP service starts after WiFi obtains an IP; camera capture and frame buffers start only when needed
+  - WiFi 获取 IP 后仅启动 HTTP 服务，摄像头采集和帧缓冲区只在实际使用时启动
+  - Native JPEG 320×240 stream at up to 10 FPS; LAN-only access without authentication
+  - 原生 JPEG 320×240 推流，最高 10 FPS，仅支持局域网访问且不启用鉴权
+  - Only one stream client is allowed at a time; a second client receives HTTP 503
+  - 同时只允许一个推流客户端，第二个客户端返回 HTTP 503
+  - Shared camera acquire/release lifecycle keeps LCD preview and HTTP streaming from stopping each other
+  - 增加摄像头 acquire/release 生命周期管理，避免屏幕预览和 HTTP 推流互相停止摄像头
+
+- **Home page enhancements / 主页功能完善**
+  - Restored the feeding home page as the default page at boot
+  - 恢复投喂主页为开机默认页面
+  - Added a next-feeding countdown displayed in hours and minutes, without seconds
+  - 新增下一次投粮倒计时，仅显示小时和分钟，不显示秒
+  - Displays `Next feed: No schedule` when no feeding plan is configured
+  - 未设置投喂计划时显示 `Next feed: No schedule`
+  - Displays the assigned device IP below the `Feed` button after WiFi connection
+  - WiFi 连接成功后，在 `Feed` 按钮下方显示设备 IP
+
+### Changed / 变更
+
+- **Board configuration / 板卡配置**
+  - Restored the Cat board LCD IO profile (MOSI:36, CLK:35, CS:37, DC:38, RST:47, BL:48), SPI mode 0, and Cat backlight settings
+  - 恢复 Cat 板 LCD IO 配置（MOSI:36、CLK:35、CS:37、DC:38、RST:47、BL:48）、SPI mode 0 及 Cat 板背光配置
+  - Re-enabled the Cat board GT911 touch input; ESP32-S3-EYE LCD pins remain as a commented test profile
+  - 重新启用 Cat 板 GT911 触摸输入，ESP32-S3-EYE LCD 引脚保留为注释测试配置
+
+- **Documentation / 文档更新**
+  - Updated English and Chinese README files with current board pins, UI behavior, streaming URLs, parameters, and client limits
+  - 更新中英文 README，补充当前板卡引脚、界面行为、推流地址、参数及客户端限制
 
 - **Documentation / 文档完善**
   - English and Chinese README documentation for root project

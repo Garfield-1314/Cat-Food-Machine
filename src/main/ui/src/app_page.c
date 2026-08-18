@@ -18,6 +18,7 @@ static lv_obj_t *date_label = NULL;
 static lv_obj_t *next_feed_label = NULL;
 static lv_obj_t *wifi_status_label = NULL;
 static lv_obj_t *wifi_icon_label = NULL;
+static lv_obj_t *ip_label = NULL;
 
 static void update_next_feed_label(void)
 {
@@ -98,6 +99,15 @@ static void app_page_timer_cb(lv_timer_t *timer)
       lv_obj_set_style_text_color(wifi_icon_label, lv_color_hex(0xFF0000), 0);
     }
   }
+
+  if (ip_label) {
+    const char *ip = wifi_app_get_ip();
+    if (ip != NULL) {
+      lv_label_set_text_fmt(ip_label, "IP: %s", ip);
+    } else {
+      lv_label_set_text(ip_label, "IP: --");
+    }
+  }
 }
 
 /* 手动喂食按钮回调 */
@@ -118,6 +128,7 @@ static void app_page_delete_cb(lv_event_t *e)
   next_feed_label = NULL;
   wifi_status_label = NULL;
   wifi_icon_label = NULL;
+  ip_label = NULL;
   if (app_timer) {
     lv_timer_del(app_timer);
     app_timer = NULL;
@@ -144,6 +155,15 @@ lv_obj_t *create_app_page(void)
   lv_label_set_text(manual_feed_label, LV_SYMBOL_PLAY " Feed");
   lv_obj_center(manual_feed_label);
   lv_obj_add_event_cb(manual_feed_btn, manual_feed_btn_cb, LV_EVENT_CLICKED, NULL);
+
+  /* 设备 IP 显示在 Feed 按钮下方，便于访问局域网视频页面 */
+  ip_label = lv_label_create(app_page);
+  lv_label_set_text(ip_label, "IP: --");
+  lv_obj_set_width(ip_label, 120);
+  lv_obj_set_style_text_font(ip_label, &lv_font_montserrat_10, 0);
+  lv_obj_set_style_text_color(ip_label, lv_color_hex(0xCCCCCC), 0);
+  lv_obj_set_style_text_align(ip_label, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_pos(ip_label, 200, 32);
 
   /* WiFi 状态行（仅显示状态，不提供按钮） */
   wifi_icon_label = lv_label_create(app_page);
