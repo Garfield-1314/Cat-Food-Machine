@@ -4,6 +4,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <time.h>
 
 #include "esp_err.h"
 
@@ -26,6 +27,7 @@ typedef void (*feeding_callback_t)(uint8_t amount);
 
 int feed_schedule_get_count(void);
 const feed_schedule_item_t *feed_schedule_get_item(int index);
+bool feed_schedule_get_next_time(time_t *next_time);
 esp_err_t feed_schedule_set_item(int index, const feed_schedule_item_t *item);
 esp_err_t feed_schedule_add_item(const feed_schedule_item_t *item);
 esp_err_t feed_schedule_remove_item(int index);

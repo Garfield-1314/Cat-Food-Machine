@@ -209,6 +209,82 @@ const feed_schedule_item_t *feed_schedule_get_item(int index)
     return item;
 }
 
+bool feed_schedule_get_next_time(time_t *next_time)
+{
+    if (next_time == NULL) {
+        return false;
+    }
+
+    time_t now;
+    time(&now);
+
+    struct tm now_tm;
+    localtime_r(&now, &now_tm);
+    if (now_tm.tm_year < (2024 - 1900)) {
+        return false;
+    }
+
+    /* 从今天零点开始逐日查找，最多检查一个完整的轮换周期。 */
+    struct tm midnight_tm = now_tm;
+    midnight_tm.tm_hour = 0;
+    midnight_tm.tm_min = 0;
+    midnight_tm.tm_sec = 0;
+    midnight_tm.tm_isdst = -1;
+    time_t midnight = mktime(&midnight_tm);
+    if (midnight == (time_t)-1) {
+        return false;
+    }
+
+    time_t nearest = (time_t)-1;
+    lock();
+
+    for (int i = 0; i < s_count; i++) {
+        const feed_schedule_item_t *item = &s_items[i];
+        if (!item->enabled) {
+            continue;
+        }
+        uint8_t every_days = item->every_days ? item->every_days : 1;
+
+        for (int day_offset = 0; day_offset <= MAX_EVERY_DAYS; day_offset++) {
+            struct tm candidate_midnight_tm = midnight_tm;
+            candidate_midnight_tm.tm_mday += day_offset;
+            candidate_midnight_tm.tm_isdst = -1;
+
+            time_t candidate_midnight = mktime(&candidate_midnight_tm);
+            if (candidate_midnight == (time_t)-1 ||
+                (candidate_midnight / 86400) % every_days != 0) {
+                continue;
+            }
+
+            struct tm candidate_tm;
+            localtime_r(&candidate_midnight, &candidate_tm);
+            candidate_tm.tm_hour = item->hour;
+            candidate_tm.tm_min = item->minute;
+            candidate_tm.tm_sec = 0;
+            candidate_tm.tm_isdst = -1;
+
+            time_t candidate = mktime(&candidate_tm);
+            if (candidate == (time_t)-1 || candidate < now) {
+                continue;
+            }
+
+            if (nearest == (time_t)-1 || candidate < nearest) {
+                nearest = candidate;
+            }
+            break;
+        }
+    }
+
+    unlock();
+
+    if (nearest == (time_t)-1) {
+        return false;
+    }
+
+    *next_time = nearest;
+    return true;
+}
+
 esp_err_t feed_schedule_set_item(int index, const feed_schedule_item_t *item)
 {
     if (item == NULL) {

@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <time.h>
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -55,6 +56,13 @@ int feed_schedule_get_count(void);
  * @return 指向计划项的指针，越界返回 NULL
  */
 const feed_schedule_item_t *feed_schedule_get_item(int index);
+
+/**
+ * @brief 获取下一次启用计划的投喂时间
+ * @param next_time 输出下一次投喂的本地时间对应的 epoch 时间
+ * @return true 找到下一次投喂，false 表示时间无效或没有启用的计划
+ */
+bool feed_schedule_get_next_time(time_t *next_time);
 
 /**
  * @brief 设置指定索引的投喂计划项
