@@ -11,11 +11,12 @@
 #include "esp_sccb_i2c.h"
 #include "esp_sccb_intf.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 static const char *TAG = "ov2640";
 
-#define CAM_FRAME_BYTES (CAM_OUTPUT_WIDTH * CAM_OUTPUT_HEIGHT * 2)
+#define CAM_FRAME_BYTES (CAM_OUTPUT_WIDTH * CAM_OUTPUT_HEIGHT)
 
 /* DVP 控制器句柄 / sensor 句柄 */
 static esp_cam_ctlr_handle_t s_cam_handle = NULL;
@@ -27,9 +28,13 @@ static esp_sccb_io_handle_t s_sccb_io = NULL;
 static uint8_t *s_buf[2] = {NULL, NULL};
 static volatile int s_next_idx = 0;
 static volatile int s_latest_idx = -1;
+static volatile size_t s_latest_size = 0;
+static volatile uint32_t s_latest_seq = 0;
 
 static bool s_ready = false;
 static bool s_running = false;
+static uint32_t s_camera_users = 0;
+static SemaphoreHandle_t s_camera_mutex = NULL;
 
 /* ========== DVP 帧回调（ISR / 低优先级上下文） ========== */
 static bool cam_get_new_trans(esp_cam_ctlr_handle_t handle,
@@ -51,7 +56,10 @@ static bool cam_trans_finished(esp_cam_ctlr_handle_t handle,
   (void)user_data;
   for (int i = 0; i < 2; i++) {
     if (trans->buffer == s_buf[i]) {
+      s_latest_seq++;
+      s_latest_size = trans->received_size;
       s_latest_idx = i;
+      s_latest_seq++;
       break;
     }
   }
@@ -112,7 +120,7 @@ static esp_err_t sensor_sccb_init(void)
   return ESP_OK;
 }
 
-/* 查找 ESP32-S3-EYE 支持的原生 RGB565 240x240 格式 */
+/* 查找 ESP32-S3-EYE 支持的原生 JPEG 320x240 格式 */
 static esp_err_t sensor_set_format(void)
 {
   esp_cam_sensor_format_array_t fmt_array = {0};
@@ -124,7 +132,7 @@ static esp_err_t sensor_set_format(void)
   for (int i = 0; i < fmt_array.count; i++) {
     const esp_cam_sensor_format_t *f = &fmt_array.format_array[i];
     ESP_LOGI(TAG, "fmt[%d]: %s", i, f->name);
-    if (f->format == ESP_CAM_SENSOR_PIXFORMAT_RGB565 &&
+    if (f->format == ESP_CAM_SENSOR_PIXFORMAT_JPEG &&
         f->width == CAM_OUTPUT_WIDTH && f->height == CAM_OUTPUT_HEIGHT) {
       selected = *f;
       found = true;
@@ -132,7 +140,7 @@ static esp_err_t sensor_set_format(void)
     }
   }
   if (!found) {
-    ESP_LOGE(TAG, "no RGB565 format found for OV2640");
+    ESP_LOGE(TAG, "no JPEG format found for OV2640");
     return ESP_ERR_NOT_SUPPORTED;
   }
 
@@ -148,6 +156,14 @@ static esp_err_t sensor_set_format(void)
 esp_err_t ov2640_camera_init(void)
 {
   esp_err_t ret = ESP_OK;
+
+  if (s_camera_mutex == NULL) {
+    s_camera_mutex = xSemaphoreCreateMutex();
+    if (s_camera_mutex == NULL) {
+      ESP_LOGE(TAG, "failed to create camera mutex");
+      return ESP_ERR_NO_MEM;
+    }
+  }
 
   /* ---------- 1. DVP 控制器 ----------
    *
@@ -170,12 +186,12 @@ esp_err_t ov2640_camera_init(void)
       .clk_src = CAM_CLK_SRC_DEFAULT,
       .h_res = CAM_OUTPUT_WIDTH,
       .v_res = CAM_OUTPUT_HEIGHT,
-      .input_data_color_type = CAM_CTLR_COLOR_RGB565,
       .dma_burst_size = 64,
       .pin = &pin_cfg,
       .bk_buffer_dis = 1,
       /* 与 ESP32-S3-EYE 官方例程一致，关闭 DVP 字节交换 */
       .byte_swap_en = 0,
+      .pic_format_jpeg = 1,
       .xclk_freq = CAM_XCLK_FREQ_HZ,
   };
 
@@ -218,7 +234,7 @@ esp_err_t ov2640_camera_init(void)
   ESP_RETURN_ON_ERROR(ret, TAG, "register callbacks failed");
 
   s_ready = true;
-  ESP_LOGI(TAG, "OV2640 initialized (%dx%d RGB565)", CAM_OUTPUT_WIDTH,
+  ESP_LOGI(TAG, "OV2640 initialized (%dx%d JPEG)", CAM_OUTPUT_WIDTH,
            CAM_OUTPUT_HEIGHT);
   return ESP_OK;
 }
@@ -251,10 +267,35 @@ esp_err_t ov2640_camera_start(void)
   }
 
   s_latest_idx = -1;
+  s_latest_size = 0;
+  s_latest_seq = 0;
   s_next_idx = 0;
   s_running = true;
   ESP_LOGI(TAG, "camera stream started");
   return ESP_OK;
+}
+
+esp_err_t ov2640_camera_acquire(void)
+{
+  if (s_camera_mutex == NULL) {
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  xSemaphoreTake(s_camera_mutex, portMAX_DELAY);
+
+  if (s_camera_users > 0) {
+    s_camera_users++;
+    xSemaphoreGive(s_camera_mutex);
+    return ESP_OK;
+  }
+
+  esp_err_t ret = ov2640_camera_start();
+  if (ret == ESP_OK) {
+    s_camera_users = 1;
+  }
+
+  xSemaphoreGive(s_camera_mutex);
+  return ret;
 }
 
 esp_err_t ov2640_camera_stop(void)
@@ -270,14 +311,58 @@ esp_err_t ov2640_camera_stop(void)
   return ESP_OK;
 }
 
-const uint16_t *ov2640_camera_get_frame(int *w, int *h)
+esp_err_t ov2640_camera_release(void)
 {
+  if (s_camera_mutex == NULL) {
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  xSemaphoreTake(s_camera_mutex, portMAX_DELAY);
+
+  if (s_camera_users == 0) {
+    xSemaphoreGive(s_camera_mutex);
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  s_camera_users--;
+  esp_err_t ret = ESP_OK;
+  if (s_camera_users == 0) {
+    ret = ov2640_camera_stop();
+  }
+
+  xSemaphoreGive(s_camera_mutex);
+  return ret;
+}
+
+const uint8_t *ov2640_camera_get_jpeg_frame(size_t *size, int *w, int *h)
+{
+  int latest_idx;
+  size_t latest_size;
+  uint32_t seq_before;
+  uint32_t seq_after;
+
+  if (size) *size = 0;
   if (w) *w = CAM_OUTPUT_WIDTH;
   if (h) *h = CAM_OUTPUT_HEIGHT;
-  if (!s_running || s_latest_idx < 0) {
+  if (!s_running) {
     return NULL;
   }
-  return (const uint16_t *)s_buf[s_latest_idx];
+
+  do {
+    seq_before = s_latest_seq;
+    if (seq_before & 1) {
+      return NULL;
+    }
+    latest_idx = s_latest_idx;
+    latest_size = s_latest_size;
+    seq_after = s_latest_seq;
+  } while (seq_before != seq_after);
+
+  if (latest_idx < 0 || latest_size == 0) {
+    return NULL;
+  }
+  if (size) *size = latest_size;
+  return s_buf[latest_idx];
 }
 
 bool ov2640_camera_is_ready(void)

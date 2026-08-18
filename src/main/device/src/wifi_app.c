@@ -1,11 +1,13 @@
 #include "device/inc/wifi_app.h"
 
+#include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
+#include "esp_netif.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "nvs.h"
@@ -38,6 +40,7 @@ static bool s_is_connected = false;
 static bool s_connecting = false;  /* 正在连接中 */
 static bool s_user_switch = false; /* 用户主动切换/断开引起的断开事件，抑制自动重试 */
 static char s_current_ssid[32] = {0};
+static char s_current_ip[16] = {0};
 static wifi_connected_cb_t s_connected_cb = NULL;
 static esp_timer_handle_t s_retry_timer = NULL;
 
@@ -84,6 +87,7 @@ static void event_handler(void *arg, esp_event_base_t event_base,
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         s_is_connected = false;
+        s_current_ip[0] = '\0';
         s_connecting = false;
         if (s_user_switch) {
             /* 用户主动切换/断开引起的事件：不自动重试，等用户重新发起连接 */
@@ -104,6 +108,8 @@ static void event_handler(void *arg, esp_event_base_t event_base,
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        snprintf(s_current_ip, sizeof(s_current_ip), IPSTR,
+                 IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
         s_is_connected = true;
         s_connecting = false;
@@ -353,6 +359,11 @@ bool wifi_app_is_connecting(void)
 const char *wifi_app_get_ssid(void)
 {
     return s_is_connected ? s_current_ssid : NULL;
+}
+
+const char *wifi_app_get_ip(void)
+{
+    return s_is_connected ? s_current_ip : NULL;
 }
 
 void wifi_app_register_connected_cb(wifi_connected_cb_t cb)

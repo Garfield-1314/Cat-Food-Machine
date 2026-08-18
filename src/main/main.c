@@ -20,6 +20,13 @@ static void on_wifi_connected(void)
 {
     ESP_LOGI(TAG, "WiFi connected, starting SNTP time sync...");
     sntp_time_init();
+
+    /* 仅启动 HTTP 服务；摄像头在客户端访问 /stream 时按需启动。 */
+    esp_err_t stream_err = video_stream_start();
+    if (stream_err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to start video stream server: %s",
+                 esp_err_to_name(stream_err));
+    }
 }
 
 /* LVGL 上下文内恢复背光 */
@@ -218,6 +225,11 @@ void user_component_init(void)
     /* 如果 WiFi 已连接（从 NVS 恢复），直接初始化 SNTP */
     if (wifi_app_is_connected()) {
         sntp_time_init();
+        esp_err_t stream_err = video_stream_start();
+        if (stream_err != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to start video stream server: %s",
+                     esp_err_to_name(stream_err));
+        }
     }
 }
 

@@ -65,6 +65,12 @@ bool wifi_app_is_connecting(void);
 const char *wifi_app_get_ssid(void);
 
 /**
+ * @brief 获取当前 IPv4 地址
+ * @return 点分十进制 IP 字符串，未连接时返回 NULL
+ */
+const char *wifi_app_get_ip(void);
+
+/**
  * @brief 注册 WiFi 连接成功回调
  * @param cb 回调函数
  */
