@@ -19,6 +19,7 @@ static lv_obj_t *next_feed_label = NULL;
 static lv_obj_t *wifi_status_label = NULL;
 static lv_obj_t *wifi_icon_label = NULL;
 static lv_obj_t *ip_label = NULL;
+static lv_obj_t *feed_confirm_dlg = NULL;
 
 static void update_next_feed_label(void)
 {
@@ -46,12 +47,13 @@ static void update_next_feed_label(void)
 
   /* 主页只显示到分钟，向上取整避免剩余几十秒时显示 00:00。 */
   int32_t total_minutes = (int32_t)((remaining + 59) / 60);
-  int32_t hours = total_minutes / 60;
+  int32_t days = total_minutes / (24 * 60);
+  int32_t hours = (total_minutes % (24 * 60)) / 60;
   int32_t minutes = total_minutes % 60;
 
   char buffer[32];
-  snprintf(buffer, sizeof(buffer), "Next feed in: %02ld:%02ld",
-           (long)hours, (long)minutes);
+  snprintf(buffer, sizeof(buffer), "Next feed in: %02ld:%02ld:%02ld",
+           (long)days, (long)hours, (long)minutes);
   lv_label_set_text(next_feed_label, buffer);
 }
 
@@ -110,11 +112,63 @@ static void app_page_timer_cb(lv_timer_t *timer)
   }
 }
 
-/* 手动喂食按钮回调 */
+/* 手动喂食按钮回调：先弹确认框，确认后才喂食 */
+static void feed_confirm_yes_cb(lv_event_t *e)
+{
+    (void)e;
+    if (feed_confirm_dlg) {
+        lv_obj_del(feed_confirm_dlg);
+        feed_confirm_dlg = NULL;
+    }
+    manual_feeding_start(1);
+}
+
+static void feed_confirm_no_cb(lv_event_t *e)
+{
+    (void)e;
+    if (feed_confirm_dlg) {
+        lv_obj_del(feed_confirm_dlg);
+        feed_confirm_dlg = NULL;
+    }
+}
+
 static void manual_feed_btn_cb(lv_event_t *e)
 {
     (void)e;
-    manual_feeding_start(1);
+    if (feed_confirm_dlg != NULL) {
+        return;
+    }
+
+    feed_confirm_dlg = lv_obj_create(app_page);
+    lv_obj_set_size(feed_confirm_dlg, lv_pct(100), lv_pct(100));
+    lv_obj_set_pos(feed_confirm_dlg, 0, 0);
+    lv_obj_set_style_bg_color(feed_confirm_dlg, lv_color_hex(0x001a27), 0);
+    lv_obj_set_style_bg_opa(feed_confirm_dlg, 230, 0);
+    lv_obj_set_style_border_width(feed_confirm_dlg, 0, 0);
+
+    lv_obj_t *msg = lv_label_create(feed_confirm_dlg);
+    lv_label_set_text(msg, "Feed now?");
+    lv_obj_set_style_text_font(msg, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(msg, lv_color_white(), 0);
+    lv_obj_align(msg, LV_ALIGN_CENTER, 0, -25);
+
+    lv_obj_t *cancel_btn = lv_btn_create(feed_confirm_dlg);
+    lv_obj_set_size(cancel_btn, 70, 30);
+    lv_obj_set_pos(cancel_btn, 55, 110);
+    lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0xAA0000), 0);
+    lv_obj_t *cancel_lbl = lv_label_create(cancel_btn);
+    lv_label_set_text(cancel_lbl, "Cancel");
+    lv_obj_center(cancel_lbl);
+    lv_obj_add_event_cb(cancel_btn, feed_confirm_no_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *ok_btn = lv_btn_create(feed_confirm_dlg);
+    lv_obj_set_size(ok_btn, 70, 30);
+    lv_obj_set_pos(ok_btn, 195, 110);
+    lv_obj_set_style_bg_color(ok_btn, lv_color_hex(0x00AA00), 0);
+    lv_obj_t *ok_lbl = lv_label_create(ok_btn);
+    lv_label_set_text(ok_lbl, "Confirm");
+    lv_obj_center(ok_lbl);
+    lv_obj_add_event_cb(ok_btn, feed_confirm_yes_cb, LV_EVENT_CLICKED, NULL);
 }
 
 static lv_timer_t *app_timer = NULL;
@@ -129,6 +183,7 @@ static void app_page_delete_cb(lv_event_t *e)
   wifi_status_label = NULL;
   wifi_icon_label = NULL;
   ip_label = NULL;
+  feed_confirm_dlg = NULL;
   if (app_timer) {
     lv_timer_del(app_timer);
     app_timer = NULL;
