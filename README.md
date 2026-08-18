@@ -8,10 +8,10 @@ An ESP32-S3 based **intelligent cat feeder** with touchscreen UI, WiFi connectiv
 
 - **Touchscreen UI** — 2.8" 320x240 SPI LCD (ST7789) with LVGL graphical interface
 - **Capacitive Touch** — GT911 touch sensor (I2C) for smooth user interaction
-- **Multi-page Interface** — Feeding home page (default), feeding control, camera preview, settings, and WiFi configuration
+- **Multi-page Interface** — Feeding home page (default), feeding control, settings, and WiFi configuration
 - **Scheduled Feeding** — Up to 8 schedules with a fixed feeding time (HH:MM) and a repeat interval in days (daily / every other day / every 3 days, ...), with NVS persistence
 - **Stepper Motor Dispensing** — A4988 driven stepper motor, 1 slot = 90° rotation
-- **OV2640 Camera** — DVP 8-bit parallel interface, native JPEG 320×240 preview on the camera page
+- **OV2640 Camera** — DVP 8-bit parallel interface, native JPEG 320×240, captured on demand
 - **WiFi Connectivity** — Station mode with saved credentials, on-screen WiFi configuration and device IP display
 - **On-demand LAN Video Streaming** — HTTP-MJPEG stream at `http://<device-ip>/stream`, with a browser page at `http://<device-ip>/`
 - **SNTP Time Sync** — Automatic time synchronization via NTP (Beijing time, UTC+8)
@@ -34,8 +34,7 @@ Cat-Food-Machine/
 │   │   ├── include.h        # Global includes
 │   │   ├── device/          # Hardware device drivers
 │   │   │   ├── inc/         #   - st7789.h, gt911.h, user_lvgl.h
-│   │   │   │                #   - ov2640.h, jpeg_preview.h
-│   │   │   │                #   - video_frame.h, video_stream.h
+│   │   │   │                #   - ov2640.h, video_stream.h
 │   │   │   │                #   - wifi_app.h, sntp_time.h
 │   │   │   └── src/         # Driver implementations
 │   │   ├── driver/          # Application-specific drivers
@@ -44,7 +43,6 @@ Cat-Food-Machine/
 │   │   └── ui/              # LVGL user interface
 │   │       ├── inc/         #   - ui.h, app_page.h, feeding_page.h
 │   │       │                #   - setting_page.h, wifi_config_page.h
-│   │       │                #   - camera_page.h
 │   │       └── src/         # UI implementations
 ├── sim/                     # Offline UI simulator (debug UI on PC, no flashing)
 │   ├── main.c               #   SDL2 interactive window build
@@ -130,6 +128,14 @@ cmake --build build -j
 The currently active hardware profile is the Cat board. ESP32-S3-EYE LCD pins
 remain in the source as a commented test profile.
 
+> **⚠️ PSRAM is unusable on this board (hardware constraint)**: the module is an
+> N16R8 (8 MB octal PSRAM inside), but its data lines D2/D3/D4 are fixed on
+> GPIO35/36/37 — exactly the pins the ST7789 LCD below uses for CLK/MOSI/CS.
+> **Enabling PSRAM causes MSPI bus contention: the device hangs during boot and
+> is reset in an infinite loop by the watchdog.** Therefore `CONFIG_SPIRAM` stays
+> disabled in the firmware. Re-enable it only on a board with free PSRAM pins
+> (see the comment in `sdkconfig.defaults`).
+
 ### LCD (ST7789) — SPI Interface
 
 | Signal | GPIO Pin |
@@ -183,19 +189,20 @@ remain in the source as a commented test profile.
 
 After WiFi obtains an IP address, the device starts an HTTP server on port 80.
 The server itself does not start camera capture. Camera capture begins only
-when a client requests `/stream` or the on-device camera page is opened.
+when a client requests the stream, and stops when the client disconnects.
 
 - Browser page: `http://<device-ip>/`
 - Raw MJPEG stream: `http://<device-ip>/stream`
-- Format: native OV2640 JPEG 320×240, sent at up to 10 FPS. The LCD preview
-  uses the ESP32-S3 ROM JPEG decoder.
+- Format: native OV2640 JPEG 320×240, sent at up to 10 FPS
 - Scope: LAN only, no authentication in the current version
 - Limit: one simultaneous stream client; an additional client receives HTTP 503
+- Memory: without usable PSRAM the firmware uses a single camera frame buffer
+  allocated on demand; merely connecting to WiFi does not start camera capture,
+  and feeding functions remain available during streaming
 
-When the stream client disconnects, its camera reference and frame buffers are
-released. The camera stops when no LCD preview or stream client is using it.
-WiFi connection alone does not start camera capture, and feeding functions
-remain available during streaming.
+> This board has no usable PSRAM, and the local LCD preview has been removed
+> (internal SRAM cannot host both the frame buffer and the RGB565 decode output);
+> the camera feed is viewed through the web stream instead.
 
 ### Device UI Behavior
 
@@ -203,7 +210,8 @@ remain available during streaming.
 - The home page displays the next feeding countdown in `HH:MM` format without seconds.
 - If no feeding schedule is configured, it displays `Next feed: No schedule`.
 - The device IP is shown below the `Feed` button after WiFi obtains an address.
-- Open the camera icon on the home page for the local 320×240 preview.
+- Tapping the camera icon on the home page shows the web stream URL
+  (`http://<device-ip>/`) — open it in a browser to watch the live feed.
 
 ## 📖 API Overview
 
@@ -257,7 +265,6 @@ bool connected = wifi_app_is_connected();
 | OV2640    | —       | DVP camera (native JPEG 320×240) |
 | esp_cam_sensor | ^1.1.0 | OV2640 sensor driver |
 | esp_http_server | ESP-IDF | HTTP server for LAN video streaming |
-| esp_driver_jpeg | ESP-IDF | JPEG driver dependency (S3 uses ROM decode) |
 
 ## 🤝 Contributing
 

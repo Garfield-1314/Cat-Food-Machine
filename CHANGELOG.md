@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] / 未发布
 
+### Fixed / 修复
+
+- **无限重启问题（PSRAM 与 LCD 引脚冲突）/ Infinite reboot loop (PSRAM pin conflict)**
+  - **现象 / Symptom**: Device could not boot — it kept resetting in a loop (`rst:0x8 (TG1WDT_SYS_RST)`), with no crash backtrace; the log stopped right after LCD init.
+  - **根因 / Root cause**: The N16R8 module's octal PSRAM data lines D2/D3/D4 are fixed on GPIO35/36/37, but the Cat board routes those same three pins to the ST7789 LCD (CLK=35 / MOSI=36 / CS=37). PSRAM detection and the memory test pass, but once the LCD driver starts driving those pins, the MSPI (PSRAM) bus and SPI2 (LCD) contend for the same pins — any PSRAM access (heap allocation, LVGL buffer read/write) hangs the MSPI bus forever → CPU stalls → the task watchdog (TG1WDT) resets the system → infinite loop.
+  - **定位过程 / Diagnosis**: With the USB-Serial-JTAG console visible, the log showed PSRAM init OK + memory test OK, yet a hard WDT reset ~1.2 s after `LCD初始化完成` with no abort backtrace (i.e., a hang, not a crash). Toggling `CONFIG_SPIRAM` reproduced / eliminated the loop.
+  - **解决 / Fix**: Keep `CONFIG_SPIRAM` disabled on the Cat board (restored in `sdkconfig.defaults` with an explanatory comment). The 8 MB PSRAM chip itself is fine — it is a board-level pin conflict that makes PSRAM unusable on this design. Only re-enable it on a board with free PSRAM pins (e.g., ESP32-S3-EYE).
+  - 模块 N16R8 的八线 PSRAM 数据线 D2/D3/D4 固定在 GPIO35/36/37，而 Cat 板把这 3 个引脚接给了 ST7789 LCD（CLK=35/MOSI=36/CS=37）。PSRAM 检测与内存测试可通过，但 LCD 驱动开始驱动这些引脚后，MSPI（PSRAM）总线与 SPI2（LCD）争用同一组引脚——任何 PSRAM 访问（堆分配、LVGL 缓冲读写）都会使 MSPI 总线永久挂起 → CPU 卡死 → 任务看门狗（TG1WDT）复位 → 无限重启。借助 JTAG 串口日志可看到 PSRAM 初始化与内存测试均通过，却在 LCD 初始化后约 1.2 秒被硬复位且无 abort 回溯（卡死而非崩溃）；切换 `CONFIG_SPIRAM` 开关可复现/消除。修复：Cat 板上保持 PSRAM 关闭（`sdkconfig.defaults` 已注明原因），8MB PSRAM 芯片本身完好，属于板级引脚冲突导致不可用。
+
 ### Changed / 变更
 
 - **Console switched from TinyUSB CDC to the built-in USB-Serial-JTAG / 控制台从 TinyUSB CDC 切换到芯片内置 USB-Serial-JTAG**
@@ -16,6 +25,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 芯片 ROM 级 USB-Serial-JTAG 虚拟串口从上电第一刻即工作，任意重启（panic、看门狗复位、重新上电）都不掉线、不重新枚举，ROM/二级 bootloader 与应用日志全程可见；无需 USB-TTL 转换器
   - Removed `tusb_serial` driver and the `espressif/esp_tinyusb` dependency (`CONFIG_TINYUSB_CDC_ENABLED` off, `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`)
   - 移除 `tusb_serial` 驱动与 `espressif/esp_tinyusb` 依赖（关闭 TinyUSB CDC，启用 `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`）
+
+- **Camera switched to web-only preview / 摄像头改为仅 Web 预览（移除本地 LCD 预览）**
+  - Removed the local LCD camera page (`camera_page`) and the JPEG preview decoder (`jpeg_preview`); the home-page camera icon now shows the web stream URL (`http://<device-ip>/`) in a popup
+  - 移除本地 LCD 摄像头页面（`camera_page`）与 JPEG 预览解码器（`jpeg_preview`）；主页相机图标改为弹出 Web 推流地址
+  - Reason: with no usable PSRAM, internal SRAM (~250 KB free heap) cannot simultaneously host the camera frame buffer, the RGB565 decode output, WiFi, and LVGL; the web stream only needs the JPEG frame buffer
+  - 原因：无可用 PSRAM 时内部 SRAM（可用堆约 250 KB）不足以同时承载相机帧缓冲、RGB565 解码输出、WiFi 与 LVGL；Web 推流仅需 JPEG 帧缓冲
+  - Memory optimizations: single camera frame buffer allocated on demand (was 2 × 75 KB allocated at boot); removed the 75 KB copy buffer (`video_frame`) — the HTTP stream reads the camera buffer directly; LVGL draw buffers reduced from 2 × 38.4 KB to a single 320×30 buffer (19.2 KB); LVGL mem pool 64 KB → 32 KB
+  - 内存优化：相机帧缓冲由启动时双缓冲 2 × 75 KB 改为首次采集时按需分配单缓冲；删除 75 KB 拷贝缓冲（`video_frame`），推流直接引用相机帧缓冲；LVGL 绘制缓冲由 2 × 38.4 KB 减为单缓冲 320×30（19.2 KB）；LVGL 内存池 64 KB → 32 KB
+- **SNTP Kconfig cleanup / SNTP 过时配置符号清理**: replaced deprecated `CONFIG_LWIP_SNTP` / `CONFIG_SNTP_*` symbols with the IDF 5.5 names (`CONFIG_LWIP_SNTP_MAX_SERVERS=3`), removing confgen "unknown symbol" warnings; smooth sync is configured via API (`sntp_set_sync_mode`) so behavior is unchanged
+  - 用 IDF 5.5 的符号名替换过时的 `CONFIG_LWIP_SNTP` / `CONFIG_SNTP_*`（`CONFIG_LWIP_SNTP_MAX_SERVERS=3`），消除 confgen 未知符号警告；平滑同步由 API（`sntp_set_sync_mode`）配置，行为不变
+- **Simulator fixes / 模拟器修复**: added the missing `wifi_app_get_ip` stub and enabled the Montserrat 10 font in `sim/lv_conf.h` so `cat_food_sim` builds again
+  - 补上缺失的 `wifi_app_get_ip` 桩函数，并在 `sim/lv_conf.h` 启用 Montserrat 10 字体，`cat_food_sim` 恢复可构建
 
 ### Added / 新增
 
