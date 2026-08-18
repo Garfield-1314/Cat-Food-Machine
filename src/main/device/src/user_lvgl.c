@@ -8,7 +8,8 @@
 
 // static const char *TAG = "lvgl";
 
-// GT911触摸芯片实例
+// GT911触摸芯片实例（Cat 板使用；ESP32-S3-EYE 无外置触摸）
+#ifndef BOARD_ESP32_S3_EYE
 static gt911_dev_t gt911_dev;
 
 // 触摸消抖相关变量
@@ -83,6 +84,7 @@ static void lvgl_touch_read_cb(lv_indev_drv_t *indev_drv,
     }
   }
 }
+#endif
 
 // 定义LVGL缓冲区 (32字节对齐以适配Cache/DMA)
 // 优先从 PSRAM 分配以释放内部 SRAM；失败时回退到内部 DMA 内存
@@ -193,7 +195,8 @@ void user_lvgl_init(void)
   // 注册显示驱动
   lv_disp_drv_register(&disp_drv);
 
-  /* Cat board GT911 configuration (active) */
+  /* Cat board GT911 configuration */
+#ifndef BOARD_ESP32_S3_EYE
   gt911_init_default(&gt911_dev);
   gt911_set_resolution(&gt911_dev, LCD_HEIGHT, LCD_WIDTH);
   gt911_set_rotation(&gt911_dev, ROTATION_INVERTED);
@@ -203,16 +206,7 @@ void user_lvgl_init(void)
   indev_drv.type = LV_INDEV_TYPE_POINTER;
   indev_drv.read_cb = lvgl_touch_read_cb;
   lv_indev_drv_register(&indev_drv);
+#endif
 
-  /* ESP32-S3-EYE test: no external GT911; GPIO21 is LCD CLK.
-  gt911_init_default(&gt911_dev);
-  gt911_set_resolution(&gt911_dev, LCD_HEIGHT, LCD_WIDTH);
-  gt911_set_rotation(&gt911_dev, ROTATION_INVERTED);
-
-  static lv_indev_drv_t indev_drv;
-  lv_indev_drv_init(&indev_drv);
-  indev_drv.type = LV_INDEV_TYPE_POINTER;
-  indev_drv.read_cb = lvgl_touch_read_cb;
-  lv_indev_drv_register(&indev_drv);
-  */
+  /* ESP32-S3-EYE has no external GT911; GPIO21 is used by the LCD clock. */
 }

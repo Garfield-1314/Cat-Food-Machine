@@ -144,7 +144,11 @@ void create_setting_page(void)
 
   // 4. 触摸芯片
   lv_obj_t *l_touch = lv_label_create(info_cont);
+#ifdef BOARD_ESP32_S3_EYE
+  lv_label_set_text(l_touch, "Touch: None (ESP32-S3-EYE)");
+#else
   lv_label_set_text(l_touch, "Touch: GT911");
+#endif
   lv_obj_set_style_text_color(l_touch, lv_color_white(), 0);
 
   // 5. 固件版本

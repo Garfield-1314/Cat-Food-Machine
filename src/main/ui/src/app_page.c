@@ -1,10 +1,12 @@
 #include "ui/inc/app_page.h"
 
+#include <stdio.h>
 #include <string.h>
 #include "ui/inc/setting_page.h"
 #include "ui/inc/ui.h"
 #include "device/inc/wifi_app.h"
 #include "device/inc/sntp_time.h"
+#include "driver/inc/feeding_schedule.h"
 #include "include.h"
 
 // 创建APP界面（开机默认显示）
@@ -13,12 +15,50 @@ lv_obj_t *app_page;
 /* 时间显示标签 */
 static lv_obj_t *time_label = NULL;
 static lv_obj_t *date_label = NULL;
+static lv_obj_t *next_feed_label = NULL;
 static lv_obj_t *wifi_status_label = NULL;
 static lv_obj_t *wifi_icon_label = NULL;
+
+static void update_next_feed_label(void)
+{
+  if (next_feed_label == NULL) {
+    return;
+  }
+
+  if (!sntp_time_is_synced()) {
+    lv_label_set_text(next_feed_label, "Next feed: Syncing...");
+    return;
+  }
+
+  time_t next_time;
+  if (!feed_schedule_get_next_time(&next_time)) {
+    lv_label_set_text(next_feed_label, "Next feed: No schedule");
+    return;
+  }
+
+  time_t now;
+  time(&now);
+  int64_t remaining = (int64_t)difftime(next_time, now);
+  if (remaining < 0) {
+    remaining = 0;
+  }
+
+  /* 主页只显示到分钟，向上取整避免剩余几十秒时显示 00:00。 */
+  int32_t total_minutes = (int32_t)((remaining + 59) / 60);
+  int32_t hours = total_minutes / 60;
+  int32_t minutes = total_minutes % 60;
+
+  char buffer[32];
+  snprintf(buffer, sizeof(buffer), "Next feed in: %02ld:%02ld",
+           (long)hours, (long)minutes);
+  lv_label_set_text(next_feed_label, buffer);
+}
 
 /* 定时刷新任务 */
 static void app_page_timer_cb(lv_timer_t *timer)
 {
+  (void)timer;
+
   /* 更新时间显示：区分 WiFi 和 SNTP 状态 */
   if (sntp_time_is_synced()) {
     char time_str[16];
@@ -43,6 +83,8 @@ static void app_page_timer_cb(lv_timer_t *timer)
       lv_label_set_text(time_label, "--:--:--");
     }
   }
+
+  update_next_feed_label();
 
   /* 更新 WiFi 状态 */
   if (wifi_status_label && wifi_icon_label) {
@@ -69,9 +111,11 @@ static lv_timer_t *app_timer = NULL;
 
 static void app_page_delete_cb(lv_event_t *e)
 {
+  (void)e;
   app_page = NULL;
   time_label = NULL;
   date_label = NULL;
+  next_feed_label = NULL;
   wifi_status_label = NULL;
   wifi_icon_label = NULL;
   if (app_timer) {
@@ -117,20 +161,27 @@ lv_obj_t *create_app_page(void)
   lv_label_set_text(time_label, "--:--:--");
   lv_obj_set_style_text_font(time_label, &lv_font_montserrat_48, 0);
   lv_obj_set_style_text_color(time_label, lv_color_hex(0xFFFFFF), 0);
-  lv_obj_align(time_label, LV_ALIGN_CENTER, 0, -20);
+  lv_obj_align(time_label, LV_ALIGN_CENTER, 0, -35);
 
   /* 日期显示 */
   date_label = lv_label_create(app_page);
   lv_label_set_text(date_label, "----/--/--");
   lv_obj_set_style_text_font(date_label, &lv_font_montserrat_18, 0);
   lv_obj_set_style_text_color(date_label, lv_color_hex(0xAAAAAA), 0);
-  lv_obj_align(date_label, LV_ALIGN_CENTER, 0, 20);
+  lv_obj_align(date_label, LV_ALIGN_CENTER, 0, 5);
+
+  /* 下一次投粮倒计时 */
+  next_feed_label = lv_label_create(app_page);
+  lv_label_set_text(next_feed_label, "Next feed: Syncing...");
+  lv_obj_set_style_text_font(next_feed_label, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(next_feed_label, lv_color_hex(0x66FF99), 0);
+  lv_obj_align(next_feed_label, LV_ALIGN_CENTER, 0, 30);
 
   // 底部应用图标区域（4 个 60px 图标均匀分布，避免重叠）
   // WiFi 设置应用图标
   lv_obj_t *wifi_app_btn = lv_btn_create(app_page);
   lv_obj_set_size(wifi_app_btn, 60, 60);
-  lv_obj_align(wifi_app_btn, LV_ALIGN_BOTTOM_LEFT, 16, -25);
+  lv_obj_align(wifi_app_btn, LV_ALIGN_BOTTOM_LEFT, 16, -15);
   lv_obj_t *wifi_app_label = lv_label_create(wifi_app_btn);
   lv_label_set_text(wifi_app_label, LV_SYMBOL_WIFI);
   lv_obj_center(wifi_app_label);
@@ -140,7 +191,7 @@ lv_obj_t *create_app_page(void)
   // 投喂计划应用图标
   lv_obj_t *feed_btn = lv_btn_create(app_page);
   lv_obj_set_size(feed_btn, 60, 60);
-  lv_obj_align(feed_btn, LV_ALIGN_BOTTOM_MID, -38, -25);
+  lv_obj_align(feed_btn, LV_ALIGN_BOTTOM_MID, -38, -15);
   lv_obj_t *feed_btn_label = lv_label_create(feed_btn);
   lv_label_set_text(feed_btn_label, LV_SYMBOL_LIST);
   lv_obj_center(feed_btn_label);
@@ -150,7 +201,7 @@ lv_obj_t *create_app_page(void)
   // 摄像头应用图标
   lv_obj_t *camera_btn = lv_btn_create(app_page);
   lv_obj_set_size(camera_btn, 60, 60);
-  lv_obj_align(camera_btn, LV_ALIGN_BOTTOM_MID, 38, -25);
+  lv_obj_align(camera_btn, LV_ALIGN_BOTTOM_MID, 38, -15);
   lv_obj_t *camera_btn_label = lv_label_create(camera_btn);
   lv_label_set_text(camera_btn_label, LV_SYMBOL_IMAGE);
   lv_obj_center(camera_btn_label);
@@ -160,7 +211,7 @@ lv_obj_t *create_app_page(void)
   // 设置功能按钮（圆形图标）
   lv_obj_t *settings_btn = lv_btn_create(app_page);
   lv_obj_set_size(settings_btn, 60, 60);
-  lv_obj_align(settings_btn, LV_ALIGN_BOTTOM_RIGHT, -16, -25);
+  lv_obj_align(settings_btn, LV_ALIGN_BOTTOM_RIGHT, -16, -15);
   lv_obj_t *settings_label = lv_label_create(settings_btn);
   lv_label_set_text(settings_label, LV_SYMBOL_SETTINGS);
   lv_obj_center(settings_label);
