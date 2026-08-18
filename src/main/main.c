@@ -169,8 +169,6 @@ void user_component_init(void)
     ESP_ERROR_CHECK(nvs_err);
     ESP_LOGI(TAG, "NVS flash initialized");
 
-    tusb_serial_init();
-    vTaskDelay(pdMS_TO_TICKS(1000));
     user_lvgl_init();
 
     /* 初始化步进电机 (A4988) */

@@ -15,8 +15,9 @@ CONFIG_CAMERA_OV2640_DVP_JPEG_320X240_50FPS=y
 # Use large single-app partition (2MB factory partition)
 CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
 
-# TinyUSB Configuration
-CONFIG_TINYUSB_CDC_ENABLED=y
+# Console over the built-in USB-Serial-JTAG (chip ROM virtual serial port).
+# Works from power-on / bootloader, stays connected across reboots, no USB-TTL needed.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
 # LVGL Configuration
 CONFIG_LV_COLOR_16_SWAP=y
@@ -34,7 +35,7 @@ CONFIG_LV_FONT_MONTSERRAT_22=y
 CONFIG_LV_FONT_MONTSERRAT_24=y
 CONFIG_LV_FONT_MONTSERRAT_48=y
 
-# All debug output goes to UART0 via uart_write_bytes
+# All debug output goes to the USB-Serial-JTAG virtual serial port
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 
 # Disable Task WDT

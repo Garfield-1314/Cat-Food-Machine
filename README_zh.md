@@ -16,7 +16,7 @@
 - **局域网按需视频推流** — 通过 HTTP-MJPEG 提供视频流，浏览器访问 `http://<设备IP>/`
 - **SNTP 时间同步** — 通过 NTP 自动同步时间（北京时间，UTC+8）
 - **背光自动熄灭** — 5 分钟无操作自动熄灭背光，触摸唤醒
-- **USB 虚拟串口** — TinyUSB CDC 用于调试日志输出与通信
+- **USB 调试串口** — 芯片内置 USB-Serial-JTAG 虚拟串口（ROM 级），从 bootloader 起即工作，重启不掉线，无需 USB-TTL 转换器
 
 ## 🧱 项目结构
 
@@ -40,7 +40,6 @@ Cat-Food-Machine/
 │   │   │   └── src/         # 驱动实现
 │   │   ├── driver/          # 应用层驱动
 │   │   │   ├── inc/         #   - feeder_motor.h, feeding_schedule.h
-│   │   │   │                #   - tusb_serial.h
 │   │   │   └── src/         # 驱动实现
 │   │   └── ui/              # LVGL 用户界面
 │   │       ├── inc/         #   - ui.h, app_page.h, feeding_page.h
@@ -249,7 +248,7 @@ bool connected = wifi_app_is_connected();
 | LVGL       | v8.4.0  | 嵌入式 GUI 图形库           |
 | ST7789     | —       | SPI 液晶屏控制器            |
 | GT911      | —       | 电容触摸控制器               |
-| TinyUSB    | —       | USB CDC 虚拟串口            |
+| USB-Serial-JTAG | ESP32-S3 | 内置调试串口（ROM 级，重启不掉线） |
 | A4988      | —       | 步进电机驱动                 |
 | OV2640     | —       | DVP 摄像头 (原生 JPEG 320×240)  |
 | esp_cam_sensor | ^1.1.0 | OV2640 传感器驱动           |

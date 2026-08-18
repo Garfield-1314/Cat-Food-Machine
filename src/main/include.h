@@ -5,7 +5,6 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 
-#include "driver/inc/tusb_serial.h"
 #include "device/inc/user_lvgl.h"
 #include "device/inc/st7789.h"
 #include "device/inc/gt911.h"

@@ -1,7 +1,6 @@
 idf_component_register(
 SRCS "main.c"
 
-"driver/src/tusb_serial.c"
 "driver/src/feeder_motor.c"
 "driver/src/feeding_schedule.c"
 

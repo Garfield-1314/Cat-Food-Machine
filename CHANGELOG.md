@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] / 未发布
 
+### Changed / 变更
+
+- **Console switched from TinyUSB CDC to the built-in USB-Serial-JTAG / 控制台从 TinyUSB CDC 切换到芯片内置 USB-Serial-JTAG**
+  - The chip ROM's USB-Serial-JTAG virtual serial port works from the very first boot stage, so debug logs (ROM bootloader, second-stage bootloader, app) stay visible across any reboot without re-enumeration; no USB-TTL adapter needed
+  - 芯片 ROM 级 USB-Serial-JTAG 虚拟串口从上电第一刻即工作，任意重启（panic、看门狗复位、重新上电）都不掉线、不重新枚举，ROM/二级 bootloader 与应用日志全程可见；无需 USB-TTL 转换器
+  - Removed `tusb_serial` driver and the `espressif/esp_tinyusb` dependency (`CONFIG_TINYUSB_CDC_ENABLED` off, `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`)
+  - 移除 `tusb_serial` 驱动与 `espressif/esp_tinyusb` 依赖（关闭 TinyUSB CDC，启用 `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`）
+
 ### Added / 新增
 
 - **OV2640 Camera / OV2640 摄像头**

@@ -16,7 +16,7 @@ An ESP32-S3 based **intelligent cat feeder** with touchscreen UI, WiFi connectiv
 - **On-demand LAN Video Streaming** — HTTP-MJPEG stream at `http://<device-ip>/stream`, with a browser page at `http://<device-ip>/`
 - **SNTP Time Sync** — Automatic time synchronization via NTP (Beijing time, UTC+8)
 - **Auto Backlight Dimming** — Automatically dims backlight after 5 minutes of inactivity
-- **USB Virtual Serial** — TinyUSB CDC for debug logging and communication
+- **USB Virtual Serial** — Built-in USB-Serial-JTAG debug port (chip ROM), works from bootloader, stays connected across reboots, no USB-TTL adapter needed
 
 ## 🧱 Project Structure
 
@@ -40,7 +40,6 @@ Cat-Food-Machine/
 │   │   │   └── src/         # Driver implementations
 │   │   ├── driver/          # Application-specific drivers
 │   │   │   ├── inc/         #   - feeder_motor.h, feeding_schedule.h
-│   │   │   │                #   - tusb_serial.h
 │   │   │   └── src/         # Driver implementations
 │   │   └── ui/              # LVGL user interface
 │   │       ├── inc/         #   - ui.h, app_page.h, feeding_page.h
@@ -253,7 +252,7 @@ bool connected = wifi_app_is_connected();
 | LVGL      | v8.4.0  | Embedded GUI library |
 | ST7789    | —       | SPI LCD controller |
 | GT911     | —       | Capacitive touch controller |
-| TinyUSB   | —       | USB CDC virtual serial |
+| USB-Serial-JTAG | ESP32-S3 | Built-in debug serial (ROM, survives reboots) |
 | A4988     | —       | Stepper motor driver |
 | OV2640    | —       | DVP camera (native JPEG 320×240) |
 | esp_cam_sensor | ^1.1.0 | OV2640 sensor driver |
