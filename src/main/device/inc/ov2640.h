@@ -30,8 +30,8 @@ extern "C" {
 
 #define CAM_XCLK_FREQ_HZ   (20 * 1000 * 1000)
 
-/* ESP32-S3-EYE OV2640 原生 JPEG 格式：320x240 */
-#define CAM_OUTPUT_WIDTH   320
+/* Cat Food Machine OV2640 方形 JPEG 格式：240x240 */
+#define CAM_OUTPUT_WIDTH   240
 #define CAM_OUTPUT_HEIGHT  240
 
 /**
@@ -71,16 +71,20 @@ esp_err_t ov2640_camera_stop(void);
 esp_err_t ov2640_camera_release(void);
 
 /**
- * @brief 获取最近一帧完整 JPEG 图像数据
+ * @brief 将最近一帧完整 JPEG 复制到调用方缓冲区
  *
- * 返回的指针只在下一帧到达前保证有效，调用方需要在使用期间复制数据。
+ * 函数会检测复制期间 DMA 是否切换了缓冲区；发生竞争时会自动重试，
+ * 因此返回 ESP_OK 后，调用方可以安全地异步发送该副本。
  *
- * @param[out] size JPEG 数据长度
- * @param[out] w 输出图像宽度
- * @param[out] h 输出图像高度
- * @return const uint8_t* JPEG 帧数据指针（NULL 表示暂无完整帧）
+ * @param[out] dst JPEG 输出缓冲区；可为 NULL 以查询当前帧所需大小
+ * @param[in] capacity dst 的容量
+ * @param[out] size JPEG 数据长度，缓冲区不足时返回所需容量
+ * @param[out] frame_id 完整帧序号，可为 NULL
+ * @return ESP_OK 复制成功；ESP_ERR_INVALID_SIZE 表示缓冲区不足；
+ *         ESP_ERR_NOT_FOUND 表示当前暂无可安全复制的新帧
  */
-const uint8_t *ov2640_camera_get_jpeg_frame(size_t *size, int *w, int *h);
+esp_err_t ov2640_camera_copy_jpeg_frame(uint8_t *dst, size_t capacity,
+                                        size_t *size, uint32_t *frame_id);
 
 /**
  * @brief 检查摄像头是否就绪（已初始化并检测到 OV2640）

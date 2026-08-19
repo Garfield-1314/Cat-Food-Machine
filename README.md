@@ -11,9 +11,9 @@ An ESP32-S3 based **intelligent cat feeder** with touchscreen UI, WiFi connectiv
 - **Multi-page Interface** — Feeding home page (default), feeding control, settings, and WiFi configuration
 - **Scheduled Feeding** — Up to 8 schedules with a fixed feeding time (HH:MM) and a repeat interval in days (daily / every other day / every 3 days, ...), with NVS persistence
 - **Stepper Motor Dispensing** — A4988 driven stepper motor, 1 slot = 90° rotation
-- **OV2640 Camera** — DVP 8-bit parallel interface, native JPEG 320×240, captured on demand
+- **OV2640 Camera** — DVP 8-bit parallel interface, square JPEG 240×240, captured on demand
 - **WiFi Connectivity** — Station mode with saved credentials, on-screen WiFi configuration and device IP display
-- **On-demand LAN Video Streaming** — HTTP-MJPEG stream at `http://<device-ip>/stream`, with a browser page at `http://<device-ip>/`
+- **On-demand LAN Video Streaming** — HTTP-MJPEG stream at `http://<device-ip>/stream`, with a self-reconnecting browser page at `http://<device-ip>/`
 - **SNTP Time Sync** — Automatic time synchronization via NTP (Beijing time, UTC+8)
 - **Auto Backlight Dimming** — Automatically dims backlight after 5 minutes of inactivity
 - **USB Virtual Serial** — Built-in USB-Serial-JTAG debug port (chip ROM), works from bootloader, stays connected across reboots, no USB-TTL adapter needed
@@ -129,12 +129,17 @@ The currently active hardware profile is the Cat board. ESP32-S3-EYE LCD pins
 remain in the source as a commented test profile.
 
 > **⚠️ PSRAM is unusable on this board (hardware constraint)**: the module is an
-> N16R8 (8 MB octal PSRAM inside), but its data lines D2/D3/D4 are fixed on
+> N16R8 (16 MB flash + 8 MB octal PSRAM), but its data lines D2/D3/D4 are fixed on
 > GPIO35/36/37 — exactly the pins the ST7789 LCD below uses for CLK/MOSI/CS.
 > **Enabling PSRAM causes MSPI bus contention: the device hangs during boot and
 > is reset in an infinite loop by the watchdog.** Therefore `CONFIG_SPIRAM` stays
 > disabled in the firmware. Re-enable it only on a board with free PSRAM pins
 > (see the comment in `sdkconfig.defaults`).
+
+The image header is configured for the physical 16 MB flash
+(`CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y`). When upgrading from the old 2 MB setting,
+flash the bootloader, partition table, and application together at least once;
+otherwise an old bootloader may continue to report a flash-size mismatch.
 
 ### LCD (ST7789) — SPI Interface
 
@@ -183,7 +188,7 @@ remain in the source as a commented test profile.
 | SCCB SCL | 5       |
 | SCCB SDA | 4       |
 
-> *SCCB runs on a dedicated I2C_NUM_1 bus (no conflict with GT911 on I2C_NUM_0). Camera pins live in `ov2640.h` (compile-time constants), native JPEG 320×240.*
+> *SCCB runs on a dedicated I2C_NUM_1 bus (no conflict with GT911 on I2C_NUM_0). Camera pins live in `ov2640.h` (compile-time constants). Application code configures a 240×240 square output from the component's public 320×240 JPEG base mode without modifying `managed_components`.*
 
 ### On-demand Video Streaming
 
@@ -193,16 +198,43 @@ when a client requests the stream, and stops when the client disconnects.
 
 - Browser page: `http://<device-ip>/`
 - Raw MJPEG stream: `http://<device-ip>/stream`
-- Format: native OV2640 JPEG 320×240, sent at up to 10 FPS
+- Format: square OV2640 JPEG 240×240, sent at up to 10 FPS
 - Scope: LAN only, no authentication in the current version
 - Limit: one simultaneous stream client; an additional client receives HTTP 503
-- Memory: without usable PSRAM the firmware uses a single camera frame buffer
-  allocated on demand; merely connecting to WiFi does not start camera capture,
-  and feeding functions remain available during streaming
+- Memory: without usable PSRAM the firmware uses two 57,600-byte DMA frame
+  buffers plus a reusable copy sized to the current compressed JPEG. The copy
+  keeps network stalls from corrupting capture; feeding remains available
+- Stability: each socket send waits for 2 seconds and retries `EAGAIN` up to
+  twice. Slow sends do not trigger catch-up frame bursts that refill TCP buffers
+- Recovery: the browser page reconnects about one second after a terminal stream
+  failure. It releases the stream while hidden and reconnects when visible.
+  Clients that consume `/stream` directly must implement their own reconnect
 
 > This board has no usable PSRAM, and the local LCD preview has been removed
 > (internal SRAM cannot host both the frame buffer and the RGB565 decode output);
 > the camera feed is viewed through the web stream instead.
+
+### Memory and Network Resource Profile
+
+| Resource | Current setting | Allocation lifetime |
+|---|---:|---|
+| LVGL draw buffer | 320×10 RGB565 = 6,400 bytes | At boot, internal DMA SRAM |
+| LVGL memory pool | 20 KiB | Static DIRAM |
+| OV2640 DMA frame buffers | 2×57,600 bytes | Allocated for a Web stream, freed on disconnect |
+| JPEG send copy | Compressed size rounded up to 4 KiB | Grows on demand during a Web stream |
+| WiFi RX | 8 static, 24 dynamic maximum, BA window 6 | While WiFi is running |
+| WiFi TX | 32 dynamic maximum | While WiFi is running |
+
+For the current build, `idf.py size` reports **134,935 bytes of static DIRAM
+(39.48%)**. This excludes camera buffers, the JPEG copy, and dynamic WiFi
+buffers allocated at runtime.
+
+The firmware uses an IPv4/WPA2 Station-only profile. IPv6, SoftAP/DHCP server,
+enterprise WiFi, and WPA3/OWE are disabled. General WiFi IRAM optimization stays
+enabled for MJPEG transmit performance, while the optional RX IRAM fast path is
+disabled. Re-enable the corresponding Kconfig options when those features are
+needed; for frequent packet loss on weak networks, restore the dynamic RX limit
+to 32 first.
 
 ### Device UI Behavior
 
@@ -262,7 +294,7 @@ bool connected = wifi_app_is_connected();
 | GT911     | —       | Capacitive touch controller |
 | USB-Serial-JTAG | ESP32-S3 | Built-in debug serial (ROM, survives reboots) |
 | A4988     | —       | Stepper motor driver |
-| OV2640    | —       | DVP camera (native JPEG 320×240) |
+| OV2640    | —       | DVP camera (square JPEG 240×240) |
 | esp_cam_sensor | ^1.1.0 | OV2640 sensor driver |
 | esp_http_server | ESP-IDF | HTTP server for LAN video streaming |
 

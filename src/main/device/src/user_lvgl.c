@@ -87,20 +87,26 @@ static void lvgl_touch_read_cb(lv_indev_drv_t *indev_drv,
 #endif
 
 // 定义LVGL缓冲区 (32字节对齐以适配Cache/DMA)
-// 单缓冲 + 1/8 屏高（320x30），节省内部 SRAM（本板无可用 PSRAM）
-#define LVGL_BUF_SIZE (LCD_WIDTH * (LCD_HEIGHT / 8))
+// 单缓冲 + 10 行（320x10），占用 6.25 KiB 内部 SRAM。
+#define LVGL_BUF_ROWS 10
+#define LVGL_BUF_SIZE (LCD_WIDTH * LVGL_BUF_ROWS)
 static lv_color_t *lvgl_buf1 = NULL;
 
 static void alloc_lvgl_buffers(void)
 {
   size_t buf_bytes = LVGL_BUF_SIZE * sizeof(lv_color_t);
+#ifdef CONFIG_SPIRAM
   lvgl_buf1 = heap_caps_aligned_alloc(32, buf_bytes,
                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
   if (lvgl_buf1 == NULL) {
-    ESP_LOGE("lvgl", "PSRAM buf1 alloc failed, fallback to internal");
+    ESP_LOGW("lvgl", "PSRAM buf1 alloc failed, fallback to internal");
     lvgl_buf1 = heap_caps_aligned_alloc(32, buf_bytes,
                                         MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
   }
+#else
+  lvgl_buf1 = heap_caps_aligned_alloc(32, buf_bytes,
+                                      MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+#endif
   if (lvgl_buf1 == NULL) {
     ESP_LOGE("lvgl", "LVGL buffer allocation failed!");
   }

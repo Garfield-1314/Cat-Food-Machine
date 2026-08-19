@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed / 修复
 
+- **HTTP-MJPEG stalls, tearing, and manual-refresh recovery / HTTP-MJPEG 卡死、撕裂与手动刷新恢复**
+  - Replaced the unsafe capture-buffer handoff with two 57,600-byte internal-DMA buffers and an independent, reusable JPEG send copy. Capture never overwrites a frame while HTTP is sending it
+  - 将不安全的采集缓冲直接传递改为两块 57,600 字节内部 DMA 缓冲 + 独立复用的 JPEG 发送副本，HTTP 发送期间采集不会覆盖正在使用的帧
+  - Added low-level partial-send-safe retries for socket `EAGAIN` (2-second wait, two retries). Frame pacing now caps at 10 FPS without catch-up bursts after a slow send
+  - 对 socket `EAGAIN` 增加了保持已发送偏移的底层重试（单次等待 2 秒，最多重试 2 次）；帧率调度在慢发送后不再追赶补帧
+  - The browser page automatically reconnects after a terminal stream error and releases the stream while the page is hidden; a page refresh is no longer required for recovery
+  - 流最终断开后浏览页会自动重连，页面转入后台时主动释放流，恢复时不再需要手动刷新
+
+- **False PSRAM allocation errors / 虚假的 PSRAM 分配错误**
+  - Camera and LVGL allocation paths now check `CONFIG_SPIRAM`; on the Cat board they request internal DMA SRAM directly instead of deliberately failing a PSRAM request first
+  - 摄像头与 LVGL 分配路径现在会检查 `CONFIG_SPIRAM`；Cat 板直接申请内部 DMA SRAM，不再每次先触发一次必然失败的 PSRAM 申请
+
+- **Flash-size header mismatch / Flash 镜像头大小不匹配**
+  - Changed the image header from 2 MB to the N16 module's detected 16 MB, eliminating `Detected size(16384k) larger than ... header(2048k)` at boot
+  - 将镜像头从 2MB 改为 N16 模块实际的 16MB，消除启动时的 `16384k` / `2048k` 不匹配警告
+
 - **无限重启问题（PSRAM 与 LCD 引脚冲突）/ Infinite reboot loop (PSRAM pin conflict)**
   - **现象 / Symptom**: Device could not boot — it kept resetting in a loop (`rst:0x8 (TG1WDT_SYS_RST)`), with no crash backtrace; the log stopped right after LCD init.
   - **根因 / Root cause**: The N16R8 module's octal PSRAM data lines D2/D3/D4 are fixed on GPIO35/36/37, but the Cat board routes those same three pins to the ST7789 LCD (CLK=35 / MOSI=36 / CS=37). PSRAM detection and the memory test pass, but once the LCD driver starts driving those pins, the MSPI (PSRAM) bus and SPI2 (LCD) contend for the same pins — any PSRAM access (heap allocation, LVGL buffer read/write) hangs the MSPI bus forever → CPU stalls → the task watchdog (TG1WDT) resets the system → infinite loop.
@@ -19,6 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 模块 N16R8 的八线 PSRAM 数据线 D2/D3/D4 固定在 GPIO35/36/37，而 Cat 板把这 3 个引脚接给了 ST7789 LCD（CLK=35/MOSI=36/CS=37）。PSRAM 检测与内存测试可通过，但 LCD 驱动开始驱动这些引脚后，MSPI（PSRAM）总线与 SPI2（LCD）争用同一组引脚——任何 PSRAM 访问（堆分配、LVGL 缓冲读写）都会使 MSPI 总线永久挂起 → CPU 卡死 → 任务看门狗（TG1WDT）复位 → 无限重启。借助 JTAG 串口日志可看到 PSRAM 初始化与内存测试均通过，却在 LCD 初始化后约 1.2 秒被硬复位且无 abort 回溯（卡死而非崩溃）；切换 `CONFIG_SPIRAM` 开关可复现/消除。修复：Cat 板上保持 PSRAM 关闭（`sdkconfig.defaults` 已注明原因），8MB PSRAM 芯片本身完好，属于板级引脚冲突导致不可用。
 
 ### Changed / 变更
+
+- **Internal-memory and WiFi resource profile / 内部内存与 WiFi 资源配置**
+  - LVGL draw buffer reduced to one 320×10 RGB565 buffer (6,400 bytes); LVGL pool reduced to 20 KiB; `app_main()` now returns after creating the LVGL task so ESP-IDF can release the main-task stack
+  - LVGL 绘制缓冲降为单块 320×10 RGB565（6,400 字节），LVGL 内存池降为 20KiB；创建 LVGL 任务后 `app_main()` 直接返回，由 ESP-IDF 回收 main task 栈
+  - WiFi RX uses 8 static buffers, a dynamic limit of 24, and BA window 6; dynamic TX remains 32. General WiFi IRAM optimization remains enabled, while RX IRAM optimization is disabled
+  - WiFi RX 调整为静态 8、动态上限 24、BA 窗口 6；动态 TX 保持 32。保留 WiFi 通用 IRAM 优化，仅关闭 RX IRAM 优化
+  - Disabled unused IPv6, SoftAP/DHCP server, enterprise WiFi, WPA3/OWE, SAE-PK/H2E, and GMAC options for the IPv4/WPA2 Station-only product profile
+  - 针对 IPv4/WPA2 Station 专用场景，关闭未使用的 IPv6、SoftAP/DHCP Server、企业 WiFi、WPA3/OWE、SAE-PK/H2E 与 GMAC
+  - Current `idf.py size`: 134,935 bytes static DIRAM (39.48%); runtime camera/JPEG/WiFi dynamic allocations are not included in this figure
+  - 当前 `idf.py size` 结果：静态 DIRAM 134,935 字节（39.48%），不包含运行时摄像头/JPEG/WiFi 动态申请
 
 - **Console switched from TinyUSB CDC to the built-in USB-Serial-JTAG / 控制台从 TinyUSB CDC 切换到芯片内置 USB-Serial-JTAG**
   - The chip ROM's USB-Serial-JTAG virtual serial port works from the very first boot stage, so debug logs (ROM bootloader, second-stage bootloader, app) stay visible across any reboot without re-enumeration; no USB-TTL adapter needed
@@ -31,8 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 移除本地 LCD 摄像头页面（`camera_page`）与 JPEG 预览解码器（`jpeg_preview`）；主页相机图标改为弹出 Web 推流地址
   - Reason: with no usable PSRAM, internal SRAM (~250 KB free heap) cannot simultaneously host the camera frame buffer, the RGB565 decode output, WiFi, and LVGL; the web stream only needs the JPEG frame buffer
   - 原因：无可用 PSRAM 时内部 SRAM（可用堆约 250 KB）不足以同时承载相机帧缓冲、RGB565 解码输出、WiFi 与 LVGL；Web 推流仅需 JPEG 帧缓冲
-  - Memory optimizations: single camera frame buffer allocated on demand (was 2 × 75 KB allocated at boot); removed the 75 KB copy buffer (`video_frame`) — the HTTP stream reads the camera buffer directly; LVGL draw buffers reduced from 2 × 38.4 KB to a single 320×30 buffer (19.2 KB); LVGL mem pool 64 KB → 32 KB
-  - 内存优化：相机帧缓冲由启动时双缓冲 2 × 75 KB 改为首次采集时按需分配单缓冲；删除 75 KB 拷贝缓冲（`video_frame`），推流直接引用相机帧缓冲；LVGL 绘制缓冲由 2 × 38.4 KB 减为单缓冲 320×30（19.2 KB）；LVGL 内存池 64 KB → 32 KB
+  - Final memory layout: two 57,600-byte camera DMA buffers are allocated only while streaming, with a compressed-size send copy rounded to 4 KiB; LVGL uses one 320×10 draw buffer and a 20 KiB pool
+  - 最终内存布局：两块 57,600 字节摄像头 DMA 缓冲仅在推流时分配，发送副本按 JPEG 压缩大小向上取整到 4KiB；LVGL 使用单块 320×10 绘制缓冲和 20KiB 内存池
 - **SNTP Kconfig cleanup / SNTP 过时配置符号清理**: replaced deprecated `CONFIG_LWIP_SNTP` / `CONFIG_SNTP_*` symbols with the IDF 5.5 names (`CONFIG_LWIP_SNTP_MAX_SERVERS=3`), removing confgen "unknown symbol" warnings; smooth sync is configured via API (`sntp_set_sync_mode`) so behavior is unchanged
   - 用 IDF 5.5 的符号名替换过时的 `CONFIG_LWIP_SNTP` / `CONFIG_SNTP_*`（`CONFIG_LWIP_SNTP_MAX_SERVERS=3`），消除 confgen 未知符号警告；平滑同步由 API（`sntp_set_sync_mode`）配置，行为不变
 - **Simulator fixes / 模拟器修复**: added the missing `wifi_app_get_ip` stub and enabled the Montserrat 10 font in `sim/lv_conf.h` so `cat_food_sim` builds again
@@ -43,24 +69,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **OV2640 Camera / OV2640 摄像头**
   - DVP 8-bit parallel interface with SCCB on dedicated I2C_NUM_1 (pins D0-D7: 11,9,8,10,12,18,17,16; VSYNC:6, DE:7, PCLK:13, XCLK:15, SCCB SCL:5, SDA:4)
   - DVP 8-bit 并行接口，SCCB 使用独立 I2C_NUM_1 总线（D0-D7: 11,9,8,10,12,18,17,16；VSYNC:6、DE:7、PCLK:13、XCLK:15、SCCB SCL:5、SDA:4）
-  - Native JPEG 320×240 capture with ROM JPEG decoding to RGB565 for the 320×240 ST7789 LCD
-  - 使用原生 JPEG 320×240 采集，并通过 ESP32-S3 ROM JPEG 解码器转换为 RGB565 显示到 320×240 ST7789 屏幕
-  - New Camera page, opened from the camera icon on the feeding home page
-  - 新增“摄像头”页面，可从投喂主页的摄像头图标进入
-  - `esp_cam_sensor` component dependency and PSRAM enabled for frame buffers
-  - 引入 `esp_cam_sensor` 组件依赖并启用 PSRAM 用于帧缓冲
+  - Project-level 240×240 square JPEG output derived through the component's public format API; `managed_components` remains unmodified
+  - 通过组件公开格式 API 在项目层派生 240×240 方形 JPEG 输出，不修改 `managed_components`
+  - Added the `esp_cam_sensor` dependency; frame buffers use internal DMA SRAM because PSRAM is intentionally disabled on this board
+  - 引入 `esp_cam_sensor` 组件依赖；本板主动关闭 PSRAM，帧缓冲使用内部 DMA SRAM
 
 - **On-demand LAN video streaming / 局域网按需视频推流**
   - Added a modular `esp_http_server` HTTP-MJPEG service with `/` browser page and `/stream` endpoint
   - 新增模块化 `esp_http_server` HTTP-MJPEG 服务，提供 `/` 浏览页面和 `/stream` 推流接口
   - HTTP service starts after WiFi obtains an IP; camera capture and frame buffers start only when needed
   - WiFi 获取 IP 后仅启动 HTTP 服务，摄像头采集和帧缓冲区只在实际使用时启动
-  - Native JPEG 320×240 stream at up to 10 FPS; LAN-only access without authentication
-  - 原生 JPEG 320×240 推流，最高 10 FPS，仅支持局域网访问且不启用鉴权
+  - Square JPEG 240×240 stream at up to 10 FPS; LAN-only access without authentication
+  - 方形 JPEG 240×240 推流，最高 10 FPS，仅支持局域网访问且不启用鉴权
   - Only one stream client is allowed at a time; a second client receives HTTP 503
   - 同时只允许一个推流客户端，第二个客户端返回 HTTP 503
-  - Shared camera acquire/release lifecycle keeps LCD preview and HTTP streaming from stopping each other
-  - 增加摄像头 acquire/release 生命周期管理，避免屏幕预览和 HTTP 推流互相停止摄像头
+  - Reference-counted acquire/release lifecycle starts capture and allocates frame buffers only while a stream client is active
+  - 通过引用计数 acquire/release 生命周期，仅在推流客户端存在时启动采集并分配帧缓冲
 
 - **Home page enhancements / 主页功能完善**
   - Restored the feeding home page as the default page at boot
