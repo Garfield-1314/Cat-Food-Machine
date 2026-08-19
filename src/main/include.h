@@ -5,13 +5,13 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 
-#include "driver/inc/tusb_serial.h"
 #include "device/inc/user_lvgl.h"
 #include "device/inc/st7789.h"
 #include "device/inc/gt911.h"
 #include "device/inc/wifi_app.h"
 #include "device/inc/sntp_time.h"
 #include "device/inc/ov2640.h"
+#include "device/inc/video_stream.h"
 
 #include "ui/inc/ui.h"
 

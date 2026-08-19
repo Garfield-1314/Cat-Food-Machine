@@ -33,6 +33,7 @@ void wifi_app_disconnect(void);
 bool wifi_app_is_connected(void);
 bool wifi_app_is_connecting(void);
 const char *wifi_app_get_ssid(void);
+const char *wifi_app_get_ip(void);
 void wifi_app_register_connected_cb(wifi_connected_cb_t cb);
 void wifi_app_save_config(const char *ssid, const char *password);
 esp_err_t wifi_app_scan(wifi_ap_info_t *results, uint16_t *count, uint16_t max_count);

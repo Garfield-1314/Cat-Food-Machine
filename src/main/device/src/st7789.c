@@ -141,6 +141,8 @@ esp_err_t lcd_st7789_init(void)
   // 初始化面板
   ret = esp_lcd_panel_init(panel_handle);
 
+  // Cat board LCD uses the default color polarity.
+
   // 设置显示方向为横屏（交换XY轴）
   ret = esp_lcd_panel_swap_xy(panel_handle, true);
 

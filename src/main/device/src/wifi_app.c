@@ -1,11 +1,13 @@
 #include "device/inc/wifi_app.h"
 
+#include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
+#include "esp_netif.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "nvs.h"
@@ -13,6 +15,13 @@
 #include "lwip/sys.h"
 
 static const char *TAG = "wifi_app";
+
+/*
+ * 调试用 WiFi 配置：默认留空，使用 NVS 配置。
+ * 填写 test_ssid 后，开机直接使用该 SSID/密码连接，不读取 NVS。
+ */
+static const char test_ssid[] = "";
+static const char test_key[] = "";
 
 /* NVS key for WiFi config */
 #define NVS_NAMESPACE  "wifi_config"
@@ -31,6 +40,7 @@ static bool s_is_connected = false;
 static bool s_connecting = false;  /* 正在连接中 */
 static bool s_user_switch = false; /* 用户主动切换/断开引起的断开事件，抑制自动重试 */
 static char s_current_ssid[32] = {0};
+static char s_current_ip[16] = {0};
 static wifi_connected_cb_t s_connected_cb = NULL;
 static esp_timer_handle_t s_retry_timer = NULL;
 
@@ -77,6 +87,7 @@ static void event_handler(void *arg, esp_event_base_t event_base,
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         s_is_connected = false;
+        s_current_ip[0] = '\0';
         s_connecting = false;
         if (s_user_switch) {
             /* 用户主动切换/断开引起的事件：不自动重试，等用户重新发起连接 */
@@ -97,6 +108,8 @@ static void event_handler(void *arg, esp_event_base_t event_base,
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        snprintf(s_current_ip, sizeof(s_current_ip), IPSTR,
+                 IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
         s_is_connected = true;
         s_connecting = false;
@@ -135,12 +148,27 @@ void wifi_app_init(void)
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
 
-    /* 尝试从 NVS 读取已保存的 WiFi 配置，在 start 之前设置 */
+    /* 调试配置优先；为空时才从 NVS 读取已保存的 WiFi 配置 */
     char saved_ssid[32] = {0};
     char saved_pass[64] = {0};
-    bool has_saved_config = wifi_app_load_config(saved_ssid, saved_pass);
+    bool has_test_config = (test_ssid[0] != '\0');
+    bool has_saved_config = false;
+    const char *connect_ssid = NULL;
+    const char *connect_password = NULL;
 
-    if (has_saved_config) {
+    if (has_test_config) {
+        connect_ssid = test_ssid;
+        connect_password = test_key;
+        ESP_LOGI(TAG, "Debug WiFi config enabled, skipping NVS load");
+    } else {
+        has_saved_config = wifi_app_load_config(saved_ssid, saved_pass);
+        if (has_saved_config) {
+            connect_ssid = saved_ssid;
+            connect_password = saved_pass;
+        }
+    }
+
+    if (has_test_config || has_saved_config) {
         /* 在 start 之前设置好配置，start 后不会触发 WIFI_EVENT_STA_START 自动连接 */
         wifi_config_t wifi_config = {
             .sta = {
@@ -148,18 +176,20 @@ void wifi_app_init(void)
                 .sae_pwe_h2e = WPA3_SAE_PWE_BOTH,
             },
         };
-        strncpy((char *)wifi_config.sta.ssid, saved_ssid, sizeof(wifi_config.sta.ssid) - 1);
-        strncpy((char *)wifi_config.sta.password, saved_pass, sizeof(wifi_config.sta.password) - 1);
+        strncpy((char *)wifi_config.sta.ssid, connect_ssid,
+                sizeof(wifi_config.sta.ssid) - 1);
+        strncpy((char *)wifi_config.sta.password, connect_password,
+                sizeof(wifi_config.sta.password) - 1);
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
 
-        strncpy(s_current_ssid, saved_ssid, sizeof(s_current_ssid) - 1);
+        strncpy(s_current_ssid, connect_ssid, sizeof(s_current_ssid) - 1);
         s_current_ssid[sizeof(s_current_ssid) - 1] = '\0';
     }
 
     /* 启动 WiFi */
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    if (has_saved_config) {
+    if (has_test_config || has_saved_config) {
         /* 配置已在 start 之前设置，这里主动发起连接 */
         esp_err_t ret = esp_wifi_connect();
         if (ret != ESP_OK) {
@@ -167,7 +197,8 @@ void wifi_app_init(void)
         } else {
             s_retry_num = 0;
             s_connecting = true;
-            ESP_LOGI(TAG, "Found saved WiFi config, auto-connecting to SSID: %s", saved_ssid);
+            ESP_LOGI(TAG, "%s WiFi config, auto-connecting to SSID: %s",
+                     has_test_config ? "Debug" : "Saved", connect_ssid);
         }
     } else {
         ESP_LOGI(TAG, "No saved WiFi config, waiting for user to configure");
@@ -328,6 +359,11 @@ bool wifi_app_is_connecting(void)
 const char *wifi_app_get_ssid(void)
 {
     return s_is_connected ? s_current_ssid : NULL;
+}
+
+const char *wifi_app_get_ip(void)
+{
+    return s_is_connected ? s_current_ip : NULL;
 }
 
 void wifi_app_register_connected_cb(wifi_connected_cb_t cb)

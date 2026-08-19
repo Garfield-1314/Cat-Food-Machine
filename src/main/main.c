@@ -20,6 +20,13 @@ static void on_wifi_connected(void)
 {
     ESP_LOGI(TAG, "WiFi connected, starting SNTP time sync...");
     sntp_time_init();
+
+    /* 仅启动 HTTP 服务；摄像头在客户端访问 /stream 时按需启动。 */
+    esp_err_t stream_err = video_stream_start();
+    if (stream_err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to start video stream server: %s",
+                 esp_err_to_name(stream_err));
+    }
 }
 
 /* LVGL 上下文内恢复背光 */
@@ -162,10 +169,7 @@ void user_component_init(void)
     ESP_ERROR_CHECK(nvs_err);
     ESP_LOGI(TAG, "NVS flash initialized");
 
-    tusb_serial_init();
-    vTaskDelay(pdMS_TO_TICKS(1000));
     user_lvgl_init();
-    create_ui();
 
     /* 初始化步进电机 (A4988) */
     feeder_motor_init();
@@ -175,8 +179,10 @@ void user_component_init(void)
     if (cam_err != ESP_OK) {
         ESP_LOGW(TAG, "OV2640 camera init failed: %s", esp_err_to_name(cam_err));
     } else {
-        ESP_LOGI(TAG, "OV2640 camera ready (enter Camera page to start stream)");
+        ESP_LOGI(TAG, "OV2640 camera ready (LAN web preview only)");
     }
+
+    create_ui();
 
     /* 从 NVS 加载投喂计划配置 */
     esp_err_t sched_err = feed_schedule_load();
@@ -216,6 +222,11 @@ void user_component_init(void)
     /* 如果 WiFi 已连接（从 NVS 恢复），直接初始化 SNTP */
     if (wifi_app_is_connected()) {
         sntp_time_init();
+        esp_err_t stream_err = video_stream_start();
+        if (stream_err != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to start video stream server: %s",
+                     esp_err_to_name(stream_err));
+        }
     }
 }
 

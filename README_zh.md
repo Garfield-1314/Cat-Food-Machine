@@ -8,14 +8,15 @@
 
 - **触控屏 UI** — 2.8 寸 320×240 SPI 液晶屏 (ST7789)，搭载 LVGL 图形界面
 - **电容触摸** — GT911 触摸传感器 (I2C)，流畅的用户交互体验
-- **多页面界面** — 主页、应用页、投喂控制页、设置页、WiFi 配置页
+- **多页面界面** — 投喂主页（默认）、投喂计划页、设置页、WiFi 配置页
 - **定时投喂** — 最多 8 组定时计划，可指定投喂时间（时:分）和间隔天数（每天 / 隔 1 天 / 隔 2 天……），数据持久化存储于 NVS
 - **步进电机出粮** — A4988 驱动步进电机，1 仓格 = 90° 旋转
-- **OV2640 摄像头** — DVP 8-bit 并行接口，RGB565 320×240 实时画面在屏幕上预览
-- **WiFi 联网** — Station 模式，支持保存凭据及界面配置
+- **OV2640 摄像头** — DVP 8-bit 并行接口，原生 JPEG 320×240，按需采集
+- **WiFi 联网** — Station 模式，支持保存凭据、界面配置及设备 IP 显示
+- **局域网按需视频推流** — 通过 HTTP-MJPEG 提供视频流，浏览器访问 `http://<设备IP>/`
 - **SNTP 时间同步** — 通过 NTP 自动同步时间（北京时间，UTC+8）
 - **背光自动熄灭** — 5 分钟无操作自动熄灭背光，触摸唤醒
-- **USB 虚拟串口** — TinyUSB CDC 用于调试日志输出与通信
+- **USB 调试串口** — 芯片内置 USB-Serial-JTAG 虚拟串口（ROM 级），从 bootloader 起即工作，重启不掉线，无需 USB-TTL 转换器
 
 ## 🧱 项目结构
 
@@ -33,16 +34,15 @@ Cat-Food-Machine/
 │   │   ├── include.h        # 全局头文件包含
 │   │   ├── device/          # 硬件设备驱动
 │   │   │   ├── inc/         #   - st7789.h, gt911.h, user_lvgl.h
+│   │   │   │                #   - ov2640.h, video_stream.h
 │   │   │   │                #   - wifi_app.h, sntp_time.h
 │   │   │   └── src/         # 驱动实现
 │   │   ├── driver/          # 应用层驱动
 │   │   │   ├── inc/         #   - feeder_motor.h, feeding_schedule.h
-│   │   │   │                #   - tusb_serial.h
 │   │   │   └── src/         # 驱动实现
 │   │   └── ui/              # LVGL 用户界面
 │   │       ├── inc/         #   - ui.h, app_page.h, feeding_page.h
 │   │       │                #   - setting_page.h, wifi_config_page.h
-│   │       │                #   - camera_page.h
 │   │       └── src/         # UI 实现
 ├── sim/                     # 离线 UI 模拟器 (PC 调试界面, 无需烧录)
 │   ├── main.c               #   SDL2 窗口交互版
@@ -124,6 +124,16 @@ cmake --build build -j
 
 ## 🖥️ 硬件配置
 
+当前启用的是 Cat 板配置。ESP32-S3-EYE 的 LCD 引脚仍保留在源码中，
+但处于注释状态。
+
+> **⚠️ PSRAM 不可用（本板硬件限制）**：模块为 N16R8（内部含 8MB 八线
+> PSRAM），但其数据线 D2/D3/D4 对应 GPIO35/36/37，与下方 LCD 的
+> CLK/MOSI/CS 引脚冲突。**启用 PSRAM 会导致 MSPI 总线争用，开机卡死并
+> 被看门狗反复复位（无限重启）**，因此固件中 `CONFIG_SPIRAM` 保持关闭。
+> 仅当更换 PSRAM 引脚空闲的板子后，才可重新启用（见 `sdkconfig.defaults`
+> 内注释）。
+
 ### LCD 液晶屏 (ST7789) — SPI 接口
 
 | 信号 | GPIO 引脚 |
@@ -171,7 +181,32 @@ cmake --build build -j
 | SCCB SCL | 5    |
 | SCCB SDA | 4    |
 
-> *SCCB 使用独立的 I2C_NUM_1 总线（不与 GT911 的 I2C_NUM_0 冲突）。摄像头引脚定义位于 `ov2640.h`（编译期常量），分辨率 RGB565 320×240。*
+> *SCCB 使用独立的 I2C_NUM_1 总线（不与 GT911 的 I2C_NUM_0 冲突）。摄像头引脚定义位于 `ov2640.h`（编译期常量），分辨率为原生 JPEG 320×240。*
+
+### 局域网按需视频推流
+
+WiFi 获取 IP 后，设备会在 80 端口启动 HTTP 服务，但不会持续启动摄像头采集。
+只有客户端访问推流地址时，才会启动摄像头采集（按需、用完即停）。
+
+- 浏览器页面：`http://<设备IP>/`
+- 原始 MJPEG 流：`http://<设备IP>/stream`
+- 参数：OV2640 原生 JPEG 320×240，最高 10 FPS
+- 范围：仅支持局域网访问，当前版本不启用鉴权
+- 限制：同时只支持 1 个推流客户端，额外客户端返回 HTTP 503
+- 内存：无 PSRAM 环境下使用单帧缓冲（按需分配/释放），仅连接 WiFi 不会启动
+  摄像头采集，主页和投喂功能不受影响
+
+> 本板无可用 PSRAM，LCD 本地预览已移除（内存不足以同时承载
+> 帧缓冲 + 解码输出），摄像头画面统一通过 Web 推流查看。
+
+### 设备界面说明
+
+- 开机默认显示投喂主页。
+- 主页显示下一次投粮倒计时，格式为 `HH:MM`，不显示秒。
+- 未设置投喂计划时显示 `Next feed: No schedule`。
+- WiFi 获取 IP 后，设备 IP 会显示在主页 `Feed` 按钮下方。
+- 点击主页的摄像头图标，可查看 Web 推流地址（`http://<设备IP>/`），
+  用浏览器打开即可观看实时画面。
 
 ## 📖 API 概览
 
@@ -220,10 +255,11 @@ bool connected = wifi_app_is_connected();
 | LVGL       | v8.4.0  | 嵌入式 GUI 图形库           |
 | ST7789     | —       | SPI 液晶屏控制器            |
 | GT911      | —       | 电容触摸控制器               |
-| TinyUSB    | —       | USB CDC 虚拟串口            |
+| USB-Serial-JTAG | ESP32-S3 | 内置调试串口（ROM 级，重启不掉线） |
 | A4988      | —       | 步进电机驱动                 |
-| OV2640     | —       | DVP 摄像头 (RGB565 320×240)  |
+| OV2640     | —       | DVP 摄像头 (原生 JPEG 320×240)  |
 | esp_cam_sensor | ^1.1.0 | OV2640 传感器驱动           |
+| esp_http_server | ESP-IDF | 局域网 HTTP 视频服务         |
 | SDL2       | 2.30    | 离线模拟器窗口显示 (仅 PC 端)   |
 
 ## 🤝 贡献

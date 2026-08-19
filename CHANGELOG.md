@@ -9,15 +9,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] / 未发布
 
+### Fixed / 修复
+
+- **无限重启问题（PSRAM 与 LCD 引脚冲突）/ Infinite reboot loop (PSRAM pin conflict)**
+  - **现象 / Symptom**: Device could not boot — it kept resetting in a loop (`rst:0x8 (TG1WDT_SYS_RST)`), with no crash backtrace; the log stopped right after LCD init.
+  - **根因 / Root cause**: The N16R8 module's octal PSRAM data lines D2/D3/D4 are fixed on GPIO35/36/37, but the Cat board routes those same three pins to the ST7789 LCD (CLK=35 / MOSI=36 / CS=37). PSRAM detection and the memory test pass, but once the LCD driver starts driving those pins, the MSPI (PSRAM) bus and SPI2 (LCD) contend for the same pins — any PSRAM access (heap allocation, LVGL buffer read/write) hangs the MSPI bus forever → CPU stalls → the task watchdog (TG1WDT) resets the system → infinite loop.
+  - **定位过程 / Diagnosis**: With the USB-Serial-JTAG console visible, the log showed PSRAM init OK + memory test OK, yet a hard WDT reset ~1.2 s after `LCD初始化完成` with no abort backtrace (i.e., a hang, not a crash). Toggling `CONFIG_SPIRAM` reproduced / eliminated the loop.
+  - **解决 / Fix**: Keep `CONFIG_SPIRAM` disabled on the Cat board (restored in `sdkconfig.defaults` with an explanatory comment). The 8 MB PSRAM chip itself is fine — it is a board-level pin conflict that makes PSRAM unusable on this design. Only re-enable it on a board with free PSRAM pins (e.g., ESP32-S3-EYE).
+  - 模块 N16R8 的八线 PSRAM 数据线 D2/D3/D4 固定在 GPIO35/36/37，而 Cat 板把这 3 个引脚接给了 ST7789 LCD（CLK=35/MOSI=36/CS=37）。PSRAM 检测与内存测试可通过，但 LCD 驱动开始驱动这些引脚后，MSPI（PSRAM）总线与 SPI2（LCD）争用同一组引脚——任何 PSRAM 访问（堆分配、LVGL 缓冲读写）都会使 MSPI 总线永久挂起 → CPU 卡死 → 任务看门狗（TG1WDT）复位 → 无限重启。借助 JTAG 串口日志可看到 PSRAM 初始化与内存测试均通过，却在 LCD 初始化后约 1.2 秒被硬复位且无 abort 回溯（卡死而非崩溃）；切换 `CONFIG_SPIRAM` 开关可复现/消除。修复：Cat 板上保持 PSRAM 关闭（`sdkconfig.defaults` 已注明原因），8MB PSRAM 芯片本身完好，属于板级引脚冲突导致不可用。
+
+### Changed / 变更
+
+- **Console switched from TinyUSB CDC to the built-in USB-Serial-JTAG / 控制台从 TinyUSB CDC 切换到芯片内置 USB-Serial-JTAG**
+  - The chip ROM's USB-Serial-JTAG virtual serial port works from the very first boot stage, so debug logs (ROM bootloader, second-stage bootloader, app) stay visible across any reboot without re-enumeration; no USB-TTL adapter needed
+  - 芯片 ROM 级 USB-Serial-JTAG 虚拟串口从上电第一刻即工作，任意重启（panic、看门狗复位、重新上电）都不掉线、不重新枚举，ROM/二级 bootloader 与应用日志全程可见；无需 USB-TTL 转换器
+  - Removed `tusb_serial` driver and the `espressif/esp_tinyusb` dependency (`CONFIG_TINYUSB_CDC_ENABLED` off, `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`)
+  - 移除 `tusb_serial` 驱动与 `espressif/esp_tinyusb` 依赖（关闭 TinyUSB CDC，启用 `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`）
+
+- **Camera switched to web-only preview / 摄像头改为仅 Web 预览（移除本地 LCD 预览）**
+  - Removed the local LCD camera page (`camera_page`) and the JPEG preview decoder (`jpeg_preview`); the home-page camera icon now shows the web stream URL (`http://<device-ip>/`) in a popup
+  - 移除本地 LCD 摄像头页面（`camera_page`）与 JPEG 预览解码器（`jpeg_preview`）；主页相机图标改为弹出 Web 推流地址
+  - Reason: with no usable PSRAM, internal SRAM (~250 KB free heap) cannot simultaneously host the camera frame buffer, the RGB565 decode output, WiFi, and LVGL; the web stream only needs the JPEG frame buffer
+  - 原因：无可用 PSRAM 时内部 SRAM（可用堆约 250 KB）不足以同时承载相机帧缓冲、RGB565 解码输出、WiFi 与 LVGL；Web 推流仅需 JPEG 帧缓冲
+  - Memory optimizations: single camera frame buffer allocated on demand (was 2 × 75 KB allocated at boot); removed the 75 KB copy buffer (`video_frame`) — the HTTP stream reads the camera buffer directly; LVGL draw buffers reduced from 2 × 38.4 KB to a single 320×30 buffer (19.2 KB); LVGL mem pool 64 KB → 32 KB
+  - 内存优化：相机帧缓冲由启动时双缓冲 2 × 75 KB 改为首次采集时按需分配单缓冲；删除 75 KB 拷贝缓冲（`video_frame`），推流直接引用相机帧缓冲；LVGL 绘制缓冲由 2 × 38.4 KB 减为单缓冲 320×30（19.2 KB）；LVGL 内存池 64 KB → 32 KB
+- **SNTP Kconfig cleanup / SNTP 过时配置符号清理**: replaced deprecated `CONFIG_LWIP_SNTP` / `CONFIG_SNTP_*` symbols with the IDF 5.5 names (`CONFIG_LWIP_SNTP_MAX_SERVERS=3`), removing confgen "unknown symbol" warnings; smooth sync is configured via API (`sntp_set_sync_mode`) so behavior is unchanged
+  - 用 IDF 5.5 的符号名替换过时的 `CONFIG_LWIP_SNTP` / `CONFIG_SNTP_*`（`CONFIG_LWIP_SNTP_MAX_SERVERS=3`），消除 confgen 未知符号警告；平滑同步由 API（`sntp_set_sync_mode`）配置，行为不变
+- **Simulator fixes / 模拟器修复**: added the missing `wifi_app_get_ip` stub and enabled the Montserrat 10 font in `sim/lv_conf.h` so `cat_food_sim` builds again
+  - 补上缺失的 `wifi_app_get_ip` 桩函数，并在 `sim/lv_conf.h` 启用 Montserrat 10 字体，`cat_food_sim` 恢复可构建
+
 ### Added / 新增
 
 - **OV2640 Camera / OV2640 摄像头**
   - DVP 8-bit parallel interface with SCCB on dedicated I2C_NUM_1 (pins D0-D7: 11,9,8,10,12,18,17,16; VSYNC:6, DE:7, PCLK:13, XCLK:15, SCCB SCL:5, SDA:4)
   - DVP 8-bit 并行接口，SCCB 使用独立 I2C_NUM_1 总线（D0-D7: 11,9,8,10,12,18,17,16；VSYNC:6、DE:7、PCLK:13、XCLK:15、SCCB SCL:5、SDA:4）
-  - RGB565 320×240 live preview on the 320×240 ST7789 LCD via a new Camera page (app launcher icon)
-  - 新增“摄像头”页面，RGB565 320×240 实时画面显示在 320×240 ST7789 屏幕上（主界面应用图标进入）
+  - Native JPEG 320×240 capture with ROM JPEG decoding to RGB565 for the 320×240 ST7789 LCD
+  - 使用原生 JPEG 320×240 采集，并通过 ESP32-S3 ROM JPEG 解码器转换为 RGB565 显示到 320×240 ST7789 屏幕
+  - New Camera page, opened from the camera icon on the feeding home page
+  - 新增“摄像头”页面，可从投喂主页的摄像头图标进入
   - `esp_cam_sensor` component dependency and PSRAM enabled for frame buffers
   - 引入 `esp_cam_sensor` 组件依赖并启用 PSRAM 用于帧缓冲
+
+- **On-demand LAN video streaming / 局域网按需视频推流**
+  - Added a modular `esp_http_server` HTTP-MJPEG service with `/` browser page and `/stream` endpoint
+  - 新增模块化 `esp_http_server` HTTP-MJPEG 服务，提供 `/` 浏览页面和 `/stream` 推流接口
+  - HTTP service starts after WiFi obtains an IP; camera capture and frame buffers start only when needed
+  - WiFi 获取 IP 后仅启动 HTTP 服务，摄像头采集和帧缓冲区只在实际使用时启动
+  - Native JPEG 320×240 stream at up to 10 FPS; LAN-only access without authentication
+  - 原生 JPEG 320×240 推流，最高 10 FPS，仅支持局域网访问且不启用鉴权
+  - Only one stream client is allowed at a time; a second client receives HTTP 503
+  - 同时只允许一个推流客户端，第二个客户端返回 HTTP 503
+  - Shared camera acquire/release lifecycle keeps LCD preview and HTTP streaming from stopping each other
+  - 增加摄像头 acquire/release 生命周期管理，避免屏幕预览和 HTTP 推流互相停止摄像头
+
+- **Home page enhancements / 主页功能完善**
+  - Restored the feeding home page as the default page at boot
+  - 恢复投喂主页为开机默认页面
+  - Added a next-feeding countdown displayed in hours and minutes, without seconds
+  - 新增下一次投粮倒计时，仅显示小时和分钟，不显示秒
+  - Displays `Next feed: No schedule` when no feeding plan is configured
+  - 未设置投喂计划时显示 `Next feed: No schedule`
+  - Displays the assigned device IP below the `Feed` button after WiFi connection
+  - WiFi 连接成功后，在 `Feed` 按钮下方显示设备 IP
+
+### Changed / 变更
+
+- **Board configuration / 板卡配置**
+  - Restored the Cat board LCD IO profile (MOSI:36, CLK:35, CS:37, DC:38, RST:47, BL:48), SPI mode 0, and Cat backlight settings
+  - 恢复 Cat 板 LCD IO 配置（MOSI:36、CLK:35、CS:37、DC:38、RST:47、BL:48）、SPI mode 0 及 Cat 板背光配置
+  - Re-enabled the Cat board GT911 touch input; ESP32-S3-EYE LCD pins remain as a commented test profile
+  - 重新启用 Cat 板 GT911 触摸输入，ESP32-S3-EYE LCD 引脚保留为注释测试配置
+
+- **Documentation / 文档更新**
+  - Updated English and Chinese README files with current board pins, UI behavior, streaming URLs, parameters, and client limits
+  - 更新中英文 README，补充当前板卡引脚、界面行为、推流地址、参数及客户端限制
 
 - **Documentation / 文档完善**
   - English and Chinese README documentation for root project

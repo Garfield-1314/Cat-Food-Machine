@@ -11,14 +11,24 @@ extern "C" {
 #define LCD_WIDTH  320
 #define LCD_HEIGHT 240
 
-// LCD引脚定义 (按 example/LVGL)
+// LCD pin profiles: comment/uncomment the two blocks when changing boards.
 #define LCD_SPI_HOST   SPI3_HOST
 #define LCD_PIN_SDO   -1
+
+// Cat board IO (active)
 #define LCD_PIN_SDA   36
 #define LCD_PIN_CLK   35
 #define LCD_PIN_CS    37
 #define LCD_PIN_DC    38
 #define LCD_PIN_RST   47
+
+// ESP32-S3-EYE test IO
+// #define LCD_PIN_SDA   47
+// #define LCD_PIN_CLK   21
+// #define LCD_PIN_CS    44
+// #define LCD_PIN_DC    43
+// #define LCD_PIN_RST   -1
+
 #define LCD_PIN_BL    48
 
 // LCD引脚配置结构

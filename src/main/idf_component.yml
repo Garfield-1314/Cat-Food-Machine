@@ -1,5 +1,4 @@
 description: cat_food main component
 dependencies:
     lvgl/lvgl: ^8.4.0
-    espressif/esp_tinyusb: "^1"
     espressif/esp_cam_sensor: "^1.1.0"

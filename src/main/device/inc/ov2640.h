@@ -2,6 +2,7 @@
 #define __OV2640_H
 
 #include <stdint.h>
+#include <stddef.h>
 #include <stdbool.h>
 #include "esp_err.h"
 
@@ -29,7 +30,7 @@ extern "C" {
 
 #define CAM_XCLK_FREQ_HZ   (20 * 1000 * 1000)
 
-/* 摄像头输出分辨率（RGB565） */
+/* ESP32-S3-EYE OV2640 原生 JPEG 格式：320x240 */
 #define CAM_OUTPUT_WIDTH   320
 #define CAM_OUTPUT_HEIGHT  240
 
@@ -48,6 +49,14 @@ esp_err_t ov2640_camera_init(void);
 esp_err_t ov2640_camera_start(void);
 
 /**
+ * @brief 获取摄像头采集使用权
+ *
+ * 多个消费者（LCD 预览、HTTP 推流）可以同时持有使用权。只有第一个
+ * 消费者会真正启动摄像头。
+ */
+esp_err_t ov2640_camera_acquire(void);
+
+/**
  * @brief 停止摄像头数据流
  *
  * @return esp_err_t 成功返回 ESP_OK
@@ -55,13 +64,23 @@ esp_err_t ov2640_camera_start(void);
 esp_err_t ov2640_camera_stop(void);
 
 /**
- * @brief 获取最近一帧完整 RGB565 图像数据
+ * @brief 释放摄像头采集使用权
  *
+ * 最后一个消费者释放使用权后才会停止摄像头。
+ */
+esp_err_t ov2640_camera_release(void);
+
+/**
+ * @brief 获取最近一帧完整 JPEG 图像数据
+ *
+ * 返回的指针只在下一帧到达前保证有效，调用方需要在使用期间复制数据。
+ *
+ * @param[out] size JPEG 数据长度
  * @param[out] w 输出图像宽度
  * @param[out] h 输出图像高度
- * @return const uint16_t* RGB565 帧数据指针（0 则不可用）
+ * @return const uint8_t* JPEG 帧数据指针（NULL 表示暂无完整帧）
  */
-const uint16_t *ov2640_camera_get_frame(int *w, int *h);
+const uint8_t *ov2640_camera_get_jpeg_frame(size_t *size, int *w, int *h);
 
 /**
  * @brief 检查摄像头是否就绪（已初始化并检测到 OV2640）
