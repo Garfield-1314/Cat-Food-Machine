@@ -249,7 +249,5 @@ void app_main(void)
 
     xTaskCreate(lvgl_event_task, "lvgl_event_task", 4096, NULL, 5, NULL);
 
-    for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
+    /* Returning lets ESP-IDF delete the main task and release its stack. */
 }
