@@ -73,7 +73,7 @@ git submodule init
 git submodule update --progress
 
 cd esp32libraries/esp-idf
-git checkout v5.5.1
+git checkout v5.5.5
 git submodule update --init --recursive --progress
 ./install.sh
 ```
