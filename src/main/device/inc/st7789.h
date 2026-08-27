@@ -16,9 +16,9 @@ extern "C" {
 #define LCD_PIN_SDO   -1
 
 // Cat board IO (active)
-#define LCD_PIN_SDA   36
-#define LCD_PIN_CLK   35
-#define LCD_PIN_CS    37
+#define LCD_PIN_SDA   41
+#define LCD_PIN_CLK   42
+#define LCD_PIN_CS    3
 #define LCD_PIN_DC    38
 #define LCD_PIN_RST   47
 

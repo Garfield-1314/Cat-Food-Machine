@@ -11,9 +11,6 @@ static const char *TAG = "feeder_motor";
 #define MOTOR_EN_GPIO   GPIO_NUM_45
 #define MOTOR_STEP_GPIO GPIO_NUM_39
 #define MOTOR_DIR_GPIO  GPIO_NUM_40
-#define MOTOR_MS1_GPIO  GPIO_NUM_41
-#define MOTOR_MS2_GPIO  GPIO_NUM_42
-#define MOTOR_MS3_GPIO  GPIO_NUM_3
 
 /* ========== 运动参数 ========== */
 /* 硬件规格：
@@ -103,10 +100,7 @@ esp_err_t feeder_motor_init(void)
     gpio_config_t io_conf = {
         .pin_bit_mask = (1ULL << MOTOR_EN_GPIO) |
                         (1ULL << MOTOR_STEP_GPIO) |
-                        (1ULL << MOTOR_DIR_GPIO) |
-                        (1ULL << MOTOR_MS1_GPIO) |
-                        (1ULL << MOTOR_MS2_GPIO) |
-                        (1ULL << MOTOR_MS3_GPIO),
+                        (1ULL << MOTOR_DIR_GPIO),
         .mode = GPIO_MODE_OUTPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -118,14 +112,11 @@ esp_err_t feeder_motor_init(void)
         return ret;
     }
 
-    /* 初始状态：EN=高(禁止)，16 细分 MS1=1,MS2=1,MS3=1 */
+    /* 初始状态：EN=高(禁止)，细分由新 PCB 硬件固定，无需软件控制 */
     /* 16 细分 */
     gpio_set_level(MOTOR_EN_GPIO, 1);
     gpio_set_level(MOTOR_STEP_GPIO, 0);
     gpio_set_level(MOTOR_DIR_GPIO, 0);
-    gpio_set_level(MOTOR_MS1_GPIO, 1);   
-    gpio_set_level(MOTOR_MS2_GPIO, 1);
-    gpio_set_level(MOTOR_MS3_GPIO, 1);
 
     s_running = false;
     ESP_LOGI(TAG, "Feeder motor initialized (FreeRTOS task, %d steps/slot)", STEPS_PER_SLOT);

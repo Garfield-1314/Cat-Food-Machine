@@ -1,8 +1,6 @@
 #include "device/inc/video_stream.h"
 
-#include <errno.h>
 #include <stdio.h>
-#include <sys/socket.h>
 
 #include "device/inc/ov2640.h"
 #include "esp_heap_caps.h"
@@ -15,13 +13,14 @@
 static const char *TAG = "video_stream";
 
 #define VIDEO_STREAM_PORT               80
+/* 调试时可直接修改该参数并重新编译；当前默认固定 10 FPS。 */
 #define VIDEO_STREAM_FPS                10
 #define VIDEO_STREAM_FRAME_INTERVAL_MS (1000 / VIDEO_STREAM_FPS)
 #define VIDEO_STREAM_SEND_WAIT_SECONDS   2
-#define VIDEO_STREAM_SEND_RETRIES        2
-#define VIDEO_STREAM_SEND_RETRY_DELAY_MS 20
 #define JPEG_COPY_ALIGNMENT              4096
-#define JPEG_MAX_BYTES                  (CAM_OUTPUT_WIDTH * CAM_OUTPUT_HEIGHT)
+#define JPEG_MAX_BYTES                  CAM_JPEG_BUFFER_BYTES
+#define VIDEO_STREAM_TASK_STACK_SIZE     6144
+#define VIDEO_STREAM_TASK_PRIORITY       5
 
 static httpd_handle_t s_http_server = NULL;
 static SemaphoreHandle_t s_client_mutex = NULL;
@@ -35,9 +34,10 @@ static const char s_index_html[] =
     "img{max-width:100%;height:auto;image-rendering:auto}</style></head>"
     "<body><h2>Cat Food Machine</h2>"
     "<img id=\"stream\" src=\"/stream\" alt=\"Camera stream\">"
-    "<script>const img=document.getElementById('stream');let timer;"
+    "<script>const img=document.getElementById('stream');let timer,delay=1000;"
     "function reconnect(){clearTimeout(timer);timer=setTimeout(()=>{"
-    "img.src='/stream?t='+Date.now()},1000)}"
+    "img.src='/stream?t='+Date.now();delay=Math.min(delay*2,10000)},delay)}"
+    "img.addEventListener('load',()=>{delay=1000});"
     "img.addEventListener('error',reconnect);"
     "document.addEventListener('visibilitychange',()=>{clearTimeout(timer);"
     "if(document.hidden){img.removeAttribute('src')}else{reconnect()}});"
@@ -64,46 +64,6 @@ static void stream_client_release(void)
     xSemaphoreGive(s_client_mutex);
 }
 
-/* httpd_resp_send_chunk() 在底层可能已发出一部分 chunk，因此不能
- * 在上层重发整个 chunk。在 session 的底层 send 回调中重试，
- * httpd_send_all() 才能正确继续尚未发出的部分。 */
-static int stream_socket_send(httpd_handle_t handle, int sockfd,
-                              const char *buf, size_t buf_len, int flags)
-{
-    (void)handle;
-    int timeout_retries = 0;
-
-    while (true) {
-        int sent = send(sockfd, buf, buf_len, flags);
-        if (sent > 0) {
-            return sent;
-        }
-        if (sent == 0) {
-            return HTTPD_SOCK_ERR_FAIL;
-        }
-
-        int send_errno = errno;
-        if (send_errno == EINTR) {
-            continue;
-        }
-        if (send_errno == EAGAIN || send_errno == EWOULDBLOCK) {
-            if (timeout_retries < VIDEO_STREAM_SEND_RETRIES) {
-                timeout_retries++;
-                vTaskDelay(pdMS_TO_TICKS(VIDEO_STREAM_SEND_RETRY_DELAY_MS));
-                continue;
-            }
-            ESP_LOGW(TAG, "stream client stalled after %d send retries",
-                     VIDEO_STREAM_SEND_RETRIES);
-            return HTTPD_SOCK_ERR_TIMEOUT;
-        }
-        if (send_errno == EINVAL || send_errno == EBADF ||
-            send_errno == EFAULT || send_errno == ENOTSOCK) {
-            return HTTPD_SOCK_ERR_INVALID;
-        }
-        return HTTPD_SOCK_ERR_FAIL;
-    }
-}
-
 static esp_err_t index_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
@@ -124,19 +84,49 @@ static esp_err_t send_stream_error(httpd_req_t *req, const char *status,
     return ret;
 }
 
-static esp_err_t stream_handler(httpd_req_t *req)
+static uint8_t *stream_alloc_jpeg_buffer(size_t capacity)
 {
+#ifdef CONFIG_SPIRAM
+  uint8_t *buffer = heap_caps_malloc(capacity,
+                                     MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (buffer != NULL) {
+    return buffer;
+  }
+  ESP_LOGW(TAG, "PSRAM JPEG send buffer allocation failed, try internal");
+#endif
+  return heap_caps_malloc(capacity, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+
+static void stream_log_stats(uint32_t frames_sent, size_t bytes_sent,
+                             uint32_t frames_skipped,
+                             TickType_t stats_start)
+{
+  TickType_t elapsed_ticks = xTaskGetTickCount() - stats_start;
+  uint32_t elapsed_ms = pdTICKS_TO_MS(elapsed_ticks);
+  if (elapsed_ms == 0) {
+    return;
+  }
+
+  uint32_t fps_x10 = (frames_sent * 10000U) / elapsed_ms;
+  uint32_t avg_bytes = frames_sent == 0 ? 0 : bytes_sent / frames_sent;
+  ESP_LOGI(TAG, "stats: fps=%u.%u, avg_jpeg=%u bytes, skipped=%u",
+           fps_x10 / 10, fps_x10 % 10, (unsigned)avg_bytes,
+           (unsigned)frames_skipped);
+}
+
+static void stream_task(void *arg)
+{
+    httpd_req_t *req = (httpd_req_t *)arg;
     uint8_t *jpeg_copy = NULL;
     size_t jpeg_capacity = 0;
     uint32_t last_frame_id = 0;
     bool camera_acquired = false;
     bool socket_send_failed = false;
     int stream_sockfd = -1;
-
-    if (!stream_client_claim()) {
-        return send_stream_error(req, "503 Service Unavailable",
-                                 "Only one stream client is supported");
-    }
+    uint32_t frames_sent = 0;
+    uint32_t frames_skipped = 0;
+    size_t bytes_sent = 0;
+    TickType_t stats_start = xTaskGetTickCount();
 
     esp_err_t ret = ESP_OK;
 
@@ -145,12 +135,6 @@ static esp_err_t stream_handler(httpd_req_t *req)
         ret = ESP_FAIL;
         goto cleanup;
     }
-    ret = httpd_sess_set_send_override(req->handle, stream_sockfd,
-                                        stream_socket_send);
-    if (ret != ESP_OK) {
-        goto cleanup;
-    }
-
     ret = ov2640_camera_acquire();
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "failed to acquire camera: %s", esp_err_to_name(ret));
@@ -189,12 +173,14 @@ static esp_err_t stream_handler(httpd_req_t *req)
             size_t new_capacity =
                 (jpeg_size + JPEG_COPY_ALIGNMENT - 1) &
                 ~(JPEG_COPY_ALIGNMENT - 1);
-            uint8_t *new_copy = heap_caps_realloc(
-                jpeg_copy, new_capacity, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            /* 当前副本没有需要保留的内容，先申请新缓冲再释放旧缓冲，
+             * 这样可以安全地在 PSRAM 和内部 RAM 之间 fallback。 */
+            uint8_t *new_copy = stream_alloc_jpeg_buffer(new_capacity);
             if (new_copy == NULL) {
                 copy_ret = ESP_ERR_NO_MEM;
                 break;
             }
+            heap_caps_free(jpeg_copy);
             jpeg_copy = new_copy;
             jpeg_capacity = new_capacity;
             ESP_LOGI(TAG, "JPEG send buffer allocated (%u bytes)",
@@ -203,6 +189,7 @@ static esp_err_t stream_handler(httpd_req_t *req)
 
         if (copy_ret == ESP_ERR_NOT_FOUND ||
             (copy_ret == ESP_OK && frame_id == last_frame_id)) {
+            frames_skipped++;
             vTaskDelay(pdMS_TO_TICKS(5));
             continue;
         }
@@ -227,7 +214,7 @@ static esp_err_t stream_handler(httpd_req_t *req)
             send_ret = httpd_resp_send_chunk(req, part_header, header_len);
             if (send_ret == ESP_OK) {
                 send_ret = httpd_resp_send_chunk(req, (const char *)jpeg_copy,
-                                                  jpeg_size);
+                                                 jpeg_size);
             }
             if (send_ret == ESP_OK) {
                 send_ret = httpd_resp_send_chunk(req, "\r\n", 2);
@@ -235,9 +222,23 @@ static esp_err_t stream_handler(httpd_req_t *req)
         }
 
         if (send_ret != ESP_OK) {
+            ESP_LOGW(TAG, "stream send failed: %s, frames_sent=%u, jpeg=%u",
+                     esp_err_to_name(send_ret), (unsigned)frames_sent,
+                     (unsigned)jpeg_size);
             socket_send_failed = true;
             ret = send_ret;
             break;
+        }
+
+        frames_sent++;
+        bytes_sent += jpeg_size;
+        if (xTaskGetTickCount() - stats_start >= pdMS_TO_TICKS(5000)) {
+            stream_log_stats(frames_sent, bytes_sent, frames_skipped,
+                             stats_start);
+            frames_sent = 0;
+            frames_skipped = 0;
+            bytes_sent = 0;
+            stats_start = xTaskGetTickCount();
         }
 
         /* 只限制最高帧率；一次发送变慢后不追赶、不补发旧帧。 */
@@ -247,12 +248,11 @@ static esp_err_t stream_handler(httpd_req_t *req)
         }
     }
 
-    /* 客户端主动断开时发送结束 chunk 通常会失败，因此只清理资源。 */
-    if (ret == ESP_OK) {
-        httpd_resp_send_chunk(req, NULL, 0);
-    }
-
 cleanup:
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "stream task ended: %s, socket=%d",
+                 esp_err_to_name(ret), stream_sockfd);
+    }
     if (jpeg_copy != NULL) {
         heap_caps_free(jpeg_copy);
     }
@@ -265,9 +265,42 @@ cleanup:
      * 同时返回 ESP_OK，避免 HTTPD 再把它记为 URI 执行错误。 */
     if (socket_send_failed && stream_sockfd >= 0 &&
         httpd_sess_trigger_close(req->handle, stream_sockfd) == ESP_OK) {
-        return ESP_OK;
+        ret = ESP_OK;
     }
-    return ret;
+
+    /* async request 必须由拥有它的任务显式完成，否则 socket 会一直被
+     * HTTPD 标记为占用，最终连首页也无法访问。 */
+    if (httpd_req_async_handler_complete(req) != ESP_OK) {
+        ESP_LOGW(TAG, "failed to complete async stream request");
+    }
+    vTaskDelete(NULL);
+}
+
+static esp_err_t stream_handler(httpd_req_t *req)
+{
+    if (!stream_client_claim()) {
+        return send_stream_error(req, "503 Service Unavailable",
+                                 "Only one stream client is supported");
+    }
+
+    httpd_req_t *async_req = NULL;
+    esp_err_t ret = httpd_req_async_handler_begin(req, &async_req);
+    if (ret != ESP_OK) {
+        stream_client_release();
+        ESP_LOGW(TAG, "failed to begin async stream request: %s",
+                 esp_err_to_name(ret));
+        return ret;
+    }
+
+    if (xTaskCreate(stream_task, "video_stream", VIDEO_STREAM_TASK_STACK_SIZE,
+                    async_req, VIDEO_STREAM_TASK_PRIORITY, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "failed to create async stream task");
+        httpd_req_async_handler_complete(async_req);
+        stream_client_release();
+        return ESP_ERR_NO_MEM;
+    }
+
+    return ESP_OK;
 }
 
 esp_err_t video_stream_start(void)
@@ -285,7 +318,8 @@ esp_err_t video_stream_start(void)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = VIDEO_STREAM_PORT;
-    config.max_open_sockets = 2;
+    /* async 推流长期占用一个 socket，至少保留一个给首页等短请求。 */
+    config.max_open_sockets = 3;
     config.max_uri_handlers = 2;
     config.send_wait_timeout = VIDEO_STREAM_SEND_WAIT_SECONDS;
 

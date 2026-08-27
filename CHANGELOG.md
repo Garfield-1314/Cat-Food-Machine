@@ -36,6 +36,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed / 变更
 
+- **ESP32-S3-EYE OV2640 high-quality web stream / ESP32-S3-EYE OV2640 高画质 Web 推流**
+  - Enabled the ESP32-S3-EYE LCD/pin profile and Octal PSRAM configuration for the EYE hardware mode; the Cat-board profile remains separate
+  - 启用 ESP32-S3-EYE 的 LCD/引脚配置与八线 PSRAM 配置用于 EYE 硬件模式；Cat 板配置保持独立
+  - Changed OV2640 output from the 240×240 square stream to native 640×480 hardware JPEG, with JPEG quality 10 configurable in the project header
+  - OV2640 输出从 240×240 方形 JPEG 改为原生 640×480 硬件 JPEG，JPEG quality 默认值为 10，可在项目头文件中调整
+  - Added two PSRAM-preferred 2 MiB DMA capture buffers and JPEG end-marker detection for the ESP32-S3 DVP path, including buffer-limit and invalid-frame diagnostics
+  - 增加两块优先使用 PSRAM 的 2 MiB DMA 采集缓冲，并针对 ESP32-S3 DVP 路径增加 JPEG 结束标志检测、缓冲区溢出和无效帧诊断
+  - Kept the Web stream rate at an adjustable default of 10 FPS (`VIDEO_STREAM_FPS`); JPEG send copies also prefer PSRAM and the latest-frame-only low-latency policy is retained
+  - Web 推流默认保持可调的 10 FPS（`VIDEO_STREAM_FPS`）；JPEG 发送副本也优先使用 PSRAM，并保留只发送最新帧的低延迟策略
+  - Moved streaming work to an asynchronous HTTP task and restored ESP-IDF's standard chunked MJPEG response API; browser reconnects now use backoff instead of retrying every second
+  - 推流改为异步 HTTP 任务，并恢复使用 ESP-IDF 标准 chunked MJPEG 响应 API；浏览器重连改为退避重试，不再每秒持续重试
+  - Leaving the video page closes the browser's stream socket, so `errno=104` and camera stop/release are treated as the expected on-demand lifecycle
+  - 离开视频页面会关闭浏览器推流 socket，因此 `errno=104` 及摄像头停止/释放属于按需推流的正常生命周期行为
+
 - **Internal-memory and WiFi resource profile / 内部内存与 WiFi 资源配置**
   - LVGL draw buffer reduced to one 320×10 RGB565 buffer (6,400 bytes); LVGL pool reduced to 20 KiB; `app_main()` now returns after creating the LVGL task so ESP-IDF can release the main-task stack
   - LVGL 绘制缓冲降为单块 320×10 RGB565（6,400 字节），LVGL 内存池降为 20KiB；创建 LVGL 任务后 `app_main()` 直接返回，由 ESP-IDF 回收 main task 栈
