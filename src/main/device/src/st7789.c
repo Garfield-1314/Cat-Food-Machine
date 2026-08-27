@@ -72,7 +72,8 @@ esp_err_t lcd_st7789_init(void)
   if (config.pin_bl >= 0) {
     ledc_timer_config_t ledc_timer = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
-        .timer_num = LEDC_TIMER_0,
+        // ESP32-S3-EYE uses LEDC_TIMER_1 because camera XCLK uses timer 0.
+        .timer_num = LEDC_TIMER_1,
         .duty_resolution = LEDC_TIMER_10_BIT,  /* 0-1023 */
         .freq_hz = 5000,                        /* 5kHz PWM */
         .clk_cfg = LEDC_AUTO_CLK,
@@ -84,9 +85,11 @@ esp_err_t lcd_st7789_init(void)
         .gpio_num = config.pin_bl,
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .channel = LEDC_CHANNEL_0,
-        .timer_sel = LEDC_TIMER_0,
+        .timer_sel = LEDC_TIMER_1,
         .duty = 0,   /* 初始关闭 */
         .hpoint = 0,
+        // ESP32-S3-EYE backlight is active-low.
+        .flags.output_invert = true,
     };
     ESP_RETURN_ON_ERROR(ledc_channel_config(&ledc_channel), TAG,
                         "背光通道配置失败");
@@ -112,7 +115,7 @@ esp_err_t lcd_st7789_init(void)
       .pclk_hz = config.spi_freq_hz,
       .lcd_cmd_bits = 8,
       .lcd_param_bits = 8,
-      .spi_mode = 0,
+      .spi_mode = 2,
       .trans_queue_depth = 10,
       .on_color_trans_done = lcd_panel_io_color_trans_done,
       .user_ctx = NULL,
@@ -146,7 +149,8 @@ esp_err_t lcd_st7789_init(void)
   ret = esp_lcd_panel_init(panel_handle);
   ESP_RETURN_ON_ERROR(ret, TAG, "ST7789面板初始化失败");
 
-  // Cat board LCD uses the default color polarity.
+  ret = esp_lcd_panel_invert_color(panel_handle, true);
+  ESP_RETURN_ON_ERROR(ret, TAG, "ST7789颜色反转配置失败");
 
   // 设置显示方向为横屏（交换XY轴）
   ret = esp_lcd_panel_swap_xy(panel_handle, true);
