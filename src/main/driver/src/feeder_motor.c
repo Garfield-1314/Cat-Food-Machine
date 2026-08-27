@@ -35,6 +35,28 @@ static const char *TAG = "feeder_motor";
 
 /* ========== 电机状态 ========== */
 static volatile bool s_running = false;
+static portMUX_TYPE s_state_mux = portMUX_INITIALIZER_UNLOCKED;
+
+static bool claim_motor(void)
+{
+    bool claimed = false;
+
+    portENTER_CRITICAL(&s_state_mux);
+    if (!s_running) {
+        s_running = true;
+        claimed = true;
+    }
+    portEXIT_CRITICAL(&s_state_mux);
+
+    return claimed;
+}
+
+static void release_motor(void)
+{
+    portENTER_CRITICAL(&s_state_mux);
+    s_running = false;
+    portEXIT_CRITICAL(&s_state_mux);
+}
 
 /* ========== 步进脉冲发送 ========== */
 static void send_step_pulses(uint32_t count)
@@ -70,13 +92,13 @@ static void dispense_task(void *arg)
     vTaskDelay(pdMS_TO_TICKS(5));
     gpio_set_level(MOTOR_EN_GPIO, 1);
 
-    s_running = false;
+    release_motor();
     ESP_LOGI(TAG, "Dispense complete");
     vTaskDelete(NULL);
 }
 
 /* ========== 初始化 ========== */
-void feeder_motor_init(void)
+esp_err_t feeder_motor_init(void)
 {
     gpio_config_t io_conf = {
         .pin_bit_mask = (1ULL << MOTOR_EN_GPIO) |
@@ -90,7 +112,11 @@ void feeder_motor_init(void)
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };
-    gpio_config(&io_conf);
+    esp_err_t ret = gpio_config(&io_conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure motor GPIOs: %s", esp_err_to_name(ret));
+        return ret;
+    }
 
     /* 初始状态：EN=高(禁止)，16 细分 MS1=1,MS2=1,MS3=1 */
     /* 16 细分 */
@@ -103,6 +129,7 @@ void feeder_motor_init(void)
 
     s_running = false;
     ESP_LOGI(TAG, "Feeder motor initialized (FreeRTOS task, %d steps/slot)", STEPS_PER_SLOT);
+    return ESP_OK;
 }
 
 /* ========== 查询电机是否空闲 ========== */
@@ -112,29 +139,40 @@ bool feeder_motor_is_idle(void)
 }
 
 /* ========== 投喂（异步，专用RTOS任务） ========== */
-void feeder_motor_dispense(uint8_t slots)
+esp_err_t feeder_motor_dispense(uint8_t slots)
 {
     if (slots == 0 || slots > 10) {
         ESP_LOGW(TAG, "Invalid slot count: %d (must be 1-10)", slots);
-        return;
+        return ESP_ERR_INVALID_ARG;
     }
 
-    if (s_running) {
+    if (!claim_motor()) {
         ESP_LOGW(TAG, "Motor already running");
-        return;
+        return ESP_ERR_INVALID_STATE;
     }
 
-    s_running = true;
-    xTaskCreate(dispense_task, "dispense", DISPENSE_TASK_STACK,
-                (void *)(intptr_t)slots, DISPENSE_TASK_PRIO, NULL);
+    BaseType_t task_ret = xTaskCreate(dispense_task, "dispense", DISPENSE_TASK_STACK,
+                                      (void *)(intptr_t)slots, DISPENSE_TASK_PRIO, NULL);
+    if (task_ret != pdPASS) {
+        release_motor();
+        ESP_LOGE(TAG, "Failed to create dispense task");
+        return ESP_ERR_NO_MEM;
+    }
+
+    return ESP_OK;
 }
 
 /* ========== 同步投喂（阻塞） ========== */
-void feeder_motor_dispense_sync(uint8_t slots)
+esp_err_t feeder_motor_dispense_sync(uint8_t slots)
 {
     if (slots == 0 || slots > 10) {
         ESP_LOGW(TAG, "Invalid slot count: %d (must be 1-10)", slots);
-        return;
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (!claim_motor()) {
+        ESP_LOGW(TAG, "Motor already running");
+        return ESP_ERR_INVALID_STATE;
     }
 
     uint32_t total_steps = (uint32_t)slots * STEPS_PER_SLOT;
@@ -150,5 +188,7 @@ void feeder_motor_dispense_sync(uint8_t slots)
     vTaskDelay(pdMS_TO_TICKS(5));
     gpio_set_level(MOTOR_EN_GPIO, 1);
 
+    release_motor();
     ESP_LOGI(TAG, "Dispense complete");
+    return ESP_OK;
 }

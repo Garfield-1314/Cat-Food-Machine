@@ -77,7 +77,8 @@ esp_err_t lcd_st7789_init(void)
         .freq_hz = 5000,                        /* 5kHz PWM */
         .clk_cfg = LEDC_AUTO_CLK,
     };
-    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+    ESP_RETURN_ON_ERROR(ledc_timer_config(&ledc_timer), TAG,
+                        "背光定时器配置失败");
 
     ledc_channel_config_t ledc_channel = {
         .gpio_num = config.pin_bl,
@@ -87,7 +88,8 @@ esp_err_t lcd_st7789_init(void)
         .duty = 0,   /* 初始关闭 */
         .hpoint = 0,
     };
-    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+    ESP_RETURN_ON_ERROR(ledc_channel_config(&ledc_channel), TAG,
+                        "背光通道配置失败");
   }
   // 配置SPI接口
   spi_bus_config_t buscfg = {
@@ -134,22 +136,28 @@ esp_err_t lcd_st7789_init(void)
   };
   // 创建ST7789面板
   ret = esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle);
+  ESP_RETURN_ON_ERROR(ret, TAG, "ST7789面板创建失败");
 
   // 复位面板
   ret = esp_lcd_panel_reset(panel_handle);
+  ESP_RETURN_ON_ERROR(ret, TAG, "ST7789面板复位失败");
 
   // 初始化面板
   ret = esp_lcd_panel_init(panel_handle);
+  ESP_RETURN_ON_ERROR(ret, TAG, "ST7789面板初始化失败");
 
   // Cat board LCD uses the default color polarity.
 
   // 设置显示方向为横屏（交换XY轴）
   ret = esp_lcd_panel_swap_xy(panel_handle, true);
+  ESP_RETURN_ON_ERROR(ret, TAG, "ST7789交换XY失败");
 
   ret = esp_lcd_panel_mirror(panel_handle, false, true);
+  ESP_RETURN_ON_ERROR(ret, TAG, "ST7789镜像配置失败");
 
   // 开启显示
   ret = esp_lcd_panel_disp_on_off(panel_handle, true);
+  ESP_RETURN_ON_ERROR(ret, TAG, "ST7789显示开启失败");
 
   // 开启背光（最亮）
   if (config.pin_bl >= 0) {

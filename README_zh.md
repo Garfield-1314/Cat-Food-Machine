@@ -44,11 +44,6 @@ Cat-Food-Machine/
 │   │       ├── inc/         #   - ui.h, app_page.h, feeding_page.h
 │   │       │                #   - setting_page.h, wifi_config_page.h
 │   │       └── src/         # UI 实现
-├── sim/                     # 离线 UI 模拟器 (PC 调试界面, 无需烧录)
-│   ├── main.c               #   SDL2 窗口交互版
-│   ├── include/             #   桩头文件 (替代硬件依赖)
-│   ├── src/                 #   桩实现
-│   └── README.md            #   模拟器使用说明
 ├── README.md                # 英文说明
 ├── README_zh.md             # 本文件 (中文说明)
 └── CHANGELOG.md             # 版本更新日志
@@ -82,45 +77,11 @@ git submodule update --init --recursive --progress
 
 ```bash
 cd src
-source ../esp32libraries/esp-idf/export.sh
+source ./esp32libraries/esp-idf/export.sh
 idf.py set-target esp32s3
 idf.py build
 idf.py flash monitor
 ```
-
-## 🖥️ 离线 UI 模拟器（无需烧录固件调试界面）
-
-固件的 LVGL 界面可以在 **PC 上直接运行调试**，无需每次烧录到 ESP32-S3。
-
-模拟器**直接复用** `src/main/ui/src/*.c`（同一份源码），仅用桩替换硬件依赖
-（WiFi / SNTP / 投喂计划 / NVS / 电机等）。
-
-### 环境要求
-
-- CMake ≥ 3.12、C 编译器
-- **SDL2**
-
-### 构建与运行
-
-```bash
-# 安装 SDL2 (Ubuntu/Debian)
-sudo apt install -y libsdl2-dev
-
-cd sim
-cmake -S . -B build
-cmake --build build -j
-./build/cat_food_sim       # 弹出 640×480 窗口，鼠标=触摸，可实时交互调试
-```
-
-### 固件改动如何同步
-
-| 固件改动 | 模拟器同步 |
-|---|---|
-| 修改现有页面 | `cmake --build build` 即可 |
-| 新增/删除页面 | `cmake --build build` 即可（自动检测），记得同步更新 `ui.c` 的 `switch_page_cb` |
-| 新页面用到新硬件函数 | 需在 `sim/include/` + `sim/src/*_stub.c` 补桩 |
-
-> 更多细节见 [`sim/README.md`](./sim/README.md)。
 
 ## 🖥️ 硬件配置
 
@@ -287,7 +248,6 @@ bool connected = wifi_app_is_connected();
 | OV2640     | —       | DVP 摄像头（方形 JPEG 240×240）  |
 | esp_cam_sensor | ^1.1.0 | OV2640 传感器驱动           |
 | esp_http_server | ESP-IDF | 局域网 HTTP 视频服务         |
-| SDL2       | 2.30    | 离线模拟器窗口显示 (仅 PC 端)   |
 
 ## 🤝 贡献
 
