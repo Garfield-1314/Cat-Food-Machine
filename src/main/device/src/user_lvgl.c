@@ -33,8 +33,9 @@ static void lvgl_touch_read_cb(lv_indev_drv_t *indev_drv,
   
     // 软件映射：物理短轴(Y)映射到屏幕长轴(X)，物理长轴(X)映射到屏幕短轴(Y)
     // 使用比例插值算法，不依赖触摸芯片的绝对坐标范围
-    int16_t x_calc =  (((240 - p.y) * 320) / 240);
-    int16_t y_calc = ((p.x * 240) / 320);
+    // 屏幕 180 度旋转后，坐标整体反转：(x,y) -> (319-x, 239-y)
+    int16_t x_calc =  319 - (((240 - p.y) * 320) / 240);
+    int16_t y_calc = 239 - ((p.x * 240) / 320);
 
     if (x_calc < 0) x_calc = 0;
     if (x_calc > 319) x_calc = 319;

@@ -1,14 +1,17 @@
 # Set target chip
 CONFIG_IDF_TARGET="esp32s3"
 
-# ESP32-S3-EYE: enable Octal PSRAM.
+# Cat board v2 (new PCB): module is N16R8 (8MB octal PSRAM).
+# The old PCB routed GPIO35/36/37 (octal PSRAM data lines) to the ST7789 LCD,
+# so PSRAM had to stay disabled (MSPI bus contention -> boot hang).
+# The new PCB moves the LCD to GPIO 41/42/3/38, freeing all octal PSRAM pins
+# (26-37), so PSRAM can be enabled. Also required by IDF 5.5.5's DVP driver,
+# which rejects non-cacheable (internal SRAM) DMA buffers.
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
-# Previous custom board: comment the two lines above and use:
-# CONFIG_SPIRAM is not set
 
-# ESP32-S3-EYE uses 8 MB flash.
-CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+# N16 module: write the detected 16 MB flash size into the image header.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 
 # OV2640 camera
 CONFIG_CAMERA_OV2640=y

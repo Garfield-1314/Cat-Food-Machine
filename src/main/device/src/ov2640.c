@@ -204,6 +204,22 @@ static esp_err_t sensor_set_format(void)
     return ret;
   }
 
+  /* 画面 180 度旋转：水平镜像 + 垂直翻转（与 LCD 显示方向一致） */
+  int32_t hmirror = 1;
+  ret = esp_cam_sensor_set_para_value(s_sensor, ESP_CAM_SENSOR_HMIRROR,
+                                      &hmirror, sizeof(hmirror));
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "set hmirror failed: %s", esp_err_to_name(ret));
+    return ret;
+  }
+  int32_t vflip = 1;
+  ret = esp_cam_sensor_set_para_value(s_sensor, ESP_CAM_SENSOR_VFLIP,
+                                      &vflip, sizeof(vflip));
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "set vflip failed: %s", esp_err_to_name(ret));
+    return ret;
+  }
+
   ESP_LOGI(TAG, "format in use: %s, JPEG quality: %d", s_active_format.name,
            jpeg_quality);
   return ESP_OK;
