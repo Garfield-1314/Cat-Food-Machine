@@ -44,11 +44,6 @@ Cat-Food-Machine/
 │   │       ├── inc/         #   - ui.h, app_page.h, feeding_page.h
 │   │       │                #   - setting_page.h, wifi_config_page.h
 │   │       └── src/         # UI implementations
-├── sim/                     # Offline UI simulator (debug UI on PC, no flashing)
-│   ├── main.c               #   SDL2 interactive window build
-│   ├── include/             #   Stub headers (replace hardware deps)
-│   ├── src/                 #   Stub implementations
-│   └── README.md            #   Simulator documentation
 ├── README.md                # English documentation
 ├── README_zh.md             # Chinese documentation
 └── CHANGELOG.md             # Release history
@@ -87,41 +82,6 @@ idf.py set-target esp32s3
 idf.py build
 idf.py flash monitor
 ```
-
-## 🖥️ Offline UI Simulator (debug UI without flashing)
-
-The firmware's LVGL UI can run directly on a **PC** for debugging, without
-flashing to the ESP32-S3 every time.
-
-The simulator **reuses** the exact same source under `src/main/ui/src/*.c`,
-only replacing hardware dependencies with stubs (WiFi / SNTP / feeding schedule / NVS / motor).
-
-### Prerequisites
-
-- CMake ≥ 3.12, a C compiler
-- **SDL2**
-
-### Build & Run
-
-```bash
-# Install SDL2 (Ubuntu/Debian)
-sudo apt install -y libsdl2-dev
-
-cd sim
-cmake -S . -B build
-cmake --build build -j
-./build/cat_food_sim       # Opens a 640×480 window; mouse = touch; interactive debugging
-```
-
-### How firmware changes sync
-
-| Firmware change | Simulator sync |
-|---|---|
-| Edit an existing page | Just `cmake --build build` |
-| Add / remove a page | Just `cmake --build build` (auto-detected); remember to update `switch_page_cb` in `ui.c` |
-| New page uses new hardware functions | Add stubs in `sim/include/` + `sim/src/*_stub.c` |
-
-> See [`sim/README.md`](./sim/README.md) for details.
 
 ## 🖥️ Hardware Configuration
 

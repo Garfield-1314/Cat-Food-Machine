@@ -21,9 +21,32 @@ lv_obj_t *setting_page;
 /* 背光亮度滑块 */
 static lv_obj_t *brightness_slider = NULL;
 static lv_obj_t *brightness_label = NULL;
+static lv_timer_t *brightness_save_timer = NULL;
+static uint8_t pending_brightness = 100;
+static bool brightness_dirty = false;
+
+static void save_brightness(uint8_t val);
+
+static void save_brightness_timer_cb(lv_timer_t *timer)
+{
+  (void)timer;
+  if (brightness_dirty) {
+    save_brightness(pending_brightness);
+    brightness_dirty = false;
+  }
+  brightness_save_timer = NULL;
+}
 
 static void setting_page_delete_cb(lv_event_t *e)
 {
+  if (brightness_save_timer != NULL) {
+    lv_timer_del(brightness_save_timer);
+    brightness_save_timer = NULL;
+  }
+  if (brightness_dirty) {
+    save_brightness(pending_brightness);
+    brightness_dirty = false;
+  }
   setting_page = NULL;
   brightness_slider = NULL;
   brightness_label = NULL;
@@ -64,7 +87,21 @@ static void brightness_slider_cb(lv_event_t *e)
     uint8_t val = (uint8_t)lv_slider_get_value(brightness_slider);
     lcd_st7789_set_brightness(val);
     lv_label_set_text_fmt(brightness_label, "%d%%", val);
-    save_brightness(val);
+    pending_brightness = val;
+    brightness_dirty = true;
+
+    if (brightness_save_timer == NULL) {
+        brightness_save_timer = lv_timer_create(save_brightness_timer_cb, 800, NULL);
+        if (brightness_save_timer != NULL) {
+            lv_timer_set_repeat_count(brightness_save_timer, 1);
+        } else {
+            /* 定时器创建失败时仍保证用户设置不会丢失。 */
+            save_brightness(pending_brightness);
+            brightness_dirty = false;
+        }
+    } else {
+        lv_timer_reset(brightness_save_timer);
+    }
 }
 
 void create_setting_page(void)
@@ -182,11 +219,15 @@ void create_setting_page(void)
   lv_obj_set_style_bg_color(brightness_slider, lv_color_hex(0x003a57), LV_PART_MAIN);
   lv_obj_set_style_bg_color(brightness_slider, lv_color_hex(0x005a77), LV_PART_INDICATOR);
   lv_obj_set_style_bg_color(brightness_slider, lv_color_hex(0x00AA00), LV_PART_KNOB);
-  lv_slider_set_value(brightness_slider, load_brightness(), LV_ANIM_OFF);
+  uint8_t saved_brightness = load_brightness();
+  if (saved_brightness < 30) saved_brightness = 30;
+  lv_slider_set_value(brightness_slider, saved_brightness, LV_ANIM_OFF);
   lv_obj_add_event_cb(brightness_slider, brightness_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-  /* 同步显示当前值 */
-  brightness_slider_cb(NULL);
+  /* 同步应用当前值，但不要因为打开设置页而写一次 Flash。 */
+  pending_brightness = saved_brightness;
+  lcd_st7789_set_brightness(saved_brightness);
+  lv_label_set_text_fmt(brightness_label, "%d%%", saved_brightness);
 
   lv_obj_add_event_cb(setting_page, setting_page_delete_cb, LV_EVENT_DELETE,
                       NULL);

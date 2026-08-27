@@ -53,11 +53,15 @@ void manual_feeding_start(uint8_t slots)
     /* 如果背光已熄灭，喂食时自动唤醒 */
     restore_backlight_lvgl();
 
+    esp_err_t ret = feeder_motor_dispense(slots);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Manual feeding rejected: %s", esp_err_to_name(ret));
+        return;
+    }
+
     s_feeding_amount = slots;
     s_feeding_active = true;
     s_feeding_done = false;
-
-    feeder_motor_dispense(slots);
     ESP_LOGI(TAG, "Manual feeding started: %d slot(s)", slots);
 }
 
@@ -71,11 +75,15 @@ static void on_feeding_triggered(uint8_t amount)
         s_backlight_restore_pending = true;
     }
 
+    esp_err_t ret = feeder_motor_dispense(amount);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Scheduled feeding rejected: %s", esp_err_to_name(ret));
+        return;
+    }
+
     s_feeding_amount = amount;
     s_feeding_active = true;
     s_feeding_done = false;
-
-    feeder_motor_dispense(amount);
 }
 
 /* LVGL 定时器回调：管理投喂弹窗的显示与隐藏（在 LVGL 上下文中执行） */
@@ -157,7 +165,7 @@ static void feeding_popup_timer_cb(lv_timer_t *timer)
     }
 }
 
-void user_component_init(void)
+esp_err_t user_component_init(void)
 {
     /* 初始化 NVS 闪存（必须最先调用，WiFi、SNTP、投喂计划都依赖它） */
     esp_err_t nvs_err = nvs_flash_init();
@@ -169,10 +177,19 @@ void user_component_init(void)
     ESP_ERROR_CHECK(nvs_err);
     ESP_LOGI(TAG, "NVS flash initialized");
 
-    user_lvgl_init();
+    esp_err_t lvgl_err = user_lvgl_init();
+    if (lvgl_err != ESP_OK) {
+        ESP_LOGE(TAG, "LVGL initialization failed: %s", esp_err_to_name(lvgl_err));
+        return lvgl_err;
+    }
 
     /* 初始化步进电机 (A4988) */
-    feeder_motor_init();
+    esp_err_t motor_err = feeder_motor_init();
+    if (motor_err != ESP_OK) {
+        ESP_LOGE(TAG, "Feeder motor initialization failed: %s",
+                 esp_err_to_name(motor_err));
+        return motor_err;
+    }
 
     /* 初始化 OV2640 摄像头 (DVP) —— 失败不影响主流程，UI 会提示 */
     esp_err_t cam_err = ov2640_camera_init();
@@ -228,6 +245,8 @@ void user_component_init(void)
                      esp_err_to_name(stream_err));
         }
     }
+
+    return ESP_OK;
 }
 
 void lvgl_event_task(void *arg)
@@ -245,7 +264,10 @@ void lvgl_event_task(void *arg)
 
 void app_main(void)
 {
-    user_component_init();
+    if (user_component_init() != ESP_OK) {
+        ESP_LOGE(TAG, "Application initialization failed");
+        return;
+    }
 
     xTaskCreate(lvgl_event_task, "lvgl_event_task", 4096, NULL, 5, NULL);
 

@@ -9,7 +9,7 @@
 #include "device/inc/sntp_time.h"
 #include "ui/inc/ui.h"
 
-/* WIFI_AUTH_OPEN 可能未被包含（模拟器无 esp_wifi 头），统一在此定义 */
+/* WIFI_AUTH_OPEN 可能未被包含，统一在此定义 */
 #ifndef WIFI_AUTH_OPEN
 #define WIFI_AUTH_OPEN 0
 #endif

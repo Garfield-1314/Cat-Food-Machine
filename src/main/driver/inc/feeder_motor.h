@@ -13,7 +13,7 @@ extern "C" {
  * @brief 初始化步进电机 (A4988 驱动)
  *        设置 GPIO 模式，初始状态为禁止 (EN=高)
  */
-void feeder_motor_init(void);
+esp_err_t feeder_motor_init(void);
 
 /**
  * @brief 投喂指定仓位数（异步，专用 FreeRTOS 任务 + GPIO 忙等发脉冲）
@@ -21,7 +21,7 @@ void feeder_motor_init(void);
  *
  * @param slots 仓位数 (1 ~ 10)
  */
-void feeder_motor_dispense(uint8_t slots);
+esp_err_t feeder_motor_dispense(uint8_t slots);
 
 /**
  * @brief 检查电机是否空闲（可用于轮询投喂完成状态）
@@ -35,7 +35,7 @@ bool feeder_motor_is_idle(void);
  *
  * @param slots 仓位数 (1 ~ 10)
  */
-void feeder_motor_dispense_sync(uint8_t slots);
+esp_err_t feeder_motor_dispense_sync(uint8_t slots);
 
 #ifdef __cplusplus
 }

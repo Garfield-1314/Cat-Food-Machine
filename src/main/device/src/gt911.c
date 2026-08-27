@@ -143,6 +143,8 @@ esp_err_t gt911_read(gt911_dev_t *dev)
   uint8_t point_info;
   esp_err_t ret = read_byte_data(dev, GT911_POINT_INFO, &point_info);
   if (ret != ESP_OK) {
+    dev->touches = 0;
+    dev->is_touched = false;
     return ret;
   }
 
@@ -150,7 +152,13 @@ esp_err_t gt911_read(gt911_dev_t *dev)
   // uint8_t proximity_valid = (point_info >> 5) & 1;
   // uint8_t have_key = (point_info >> 4) & 1;
   dev->is_large_detect = (point_info >> 6) & 1;
-  dev->touches = point_info & 0xF;
+  uint8_t touches = point_info & 0xF;
+  if (touches > 5) {
+    ESP_LOGW(TAG, "GT911 reported invalid touch count: %u", touches);
+    touches = 5;
+  }
+  /* The point data is valid only while the buffer-status bit is set. */
+  dev->touches = buffer_status ? touches : 0;
 
   dev->is_touched = (dev->touches > 0);
 
@@ -158,14 +166,18 @@ esp_err_t gt911_read(gt911_dev_t *dev)
     for (uint8_t i = 0; i < dev->touches; i++) {
       uint8_t data[7];
       ret = read_block_data(dev, GT911_POINT_1 + i * 8, data, 7);
-      if (ret == ESP_OK) {
-        dev->points[i] = read_point(dev, data);
+      if (ret != ESP_OK) {
+        dev->touches = 0;
+        dev->is_touched = false;
+        break;
       }
+      dev->points[i] = read_point(dev, data);
     }
   }
 
   // 清除触摸状态
-  return write_byte_data(dev, GT911_POINT_INFO, 0);
+  esp_err_t clear_ret = write_byte_data(dev, GT911_POINT_INFO, 0);
+  return (ret != ESP_OK) ? ret : clear_ret;
 }
 
 uint8_t gt911_get_touch_count(gt911_dev_t *dev) { return dev->touches; }

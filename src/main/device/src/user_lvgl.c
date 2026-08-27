@@ -92,7 +92,7 @@ static void lvgl_touch_read_cb(lv_indev_drv_t *indev_drv,
 #define LVGL_BUF_SIZE (LCD_WIDTH * LVGL_BUF_ROWS)
 static lv_color_t *lvgl_buf1 = NULL;
 
-static void alloc_lvgl_buffers(void)
+static esp_err_t alloc_lvgl_buffers(void)
 {
   size_t buf_bytes = LVGL_BUF_SIZE * sizeof(lv_color_t);
 #ifdef CONFIG_SPIRAM
@@ -109,7 +109,10 @@ static void alloc_lvgl_buffers(void)
 #endif
   if (lvgl_buf1 == NULL) {
     ESP_LOGE("lvgl", "LVGL buffer allocation failed!");
+    return ESP_ERR_NO_MEM;
   }
+
+  return ESP_OK;
 }
 
 // LCD传输完成回调
@@ -158,10 +161,14 @@ void lvgl_flush_cb(lv_disp_drv_t *disp_drv, const lv_area_t *area,
   // 它会在DMA传输完成回调 lcd_flush_ready_callback 中被调用
 }
 
-void user_lvgl_init(void)
+esp_err_t user_lvgl_init(void)
 {
   // 初始化LCD硬件
-  lcd_st7789_init();
+  esp_err_t ret = lcd_st7789_init();
+  if (ret != ESP_OK) {
+    ESP_LOGE("lvgl", "LCD initialization failed: %s", esp_err_to_name(ret));
+    return ret;
+  }
 
   // LCD测试图案（验证硬件）
   // ST7789_test_pattern();
@@ -185,18 +192,36 @@ void user_lvgl_init(void)
 
   // 设置显示缓冲区（单缓冲部分刷新）
   static lv_disp_draw_buf_t disp_buf;
-  alloc_lvgl_buffers();
+  ret = alloc_lvgl_buffers();
+  if (ret != ESP_OK) {
+    return ret;
+  }
   lv_disp_draw_buf_init(&disp_buf, lvgl_buf1, NULL, LVGL_BUF_SIZE);
   disp_drv.draw_buf = &disp_buf;
 
   // 注册显示驱动
-  lv_disp_drv_register(&disp_drv);
+  if (lv_disp_drv_register(&disp_drv) == NULL) {
+    ESP_LOGE("lvgl", "Display driver registration failed");
+    return ESP_FAIL;
+  }
 
   /* Cat board GT911 configuration */
 #ifndef BOARD_ESP32_S3_EYE
-  gt911_init_default(&gt911_dev);
-  gt911_set_resolution(&gt911_dev, LCD_HEIGHT, LCD_WIDTH);
-  gt911_set_rotation(&gt911_dev, ROTATION_INVERTED);
+  ret = gt911_init_default(&gt911_dev);
+  if (ret != ESP_OK) {
+    ESP_LOGE("lvgl", "GT911 initialization failed: %s", esp_err_to_name(ret));
+    return ret;
+  }
+  ret = gt911_set_resolution(&gt911_dev, LCD_HEIGHT, LCD_WIDTH);
+  if (ret != ESP_OK) {
+    ESP_LOGE("lvgl", "GT911 resolution setup failed: %s", esp_err_to_name(ret));
+    return ret;
+  }
+  ret = gt911_set_rotation(&gt911_dev, ROTATION_INVERTED);
+  if (ret != ESP_OK) {
+    ESP_LOGE("lvgl", "GT911 rotation setup failed: %s", esp_err_to_name(ret));
+    return ret;
+  }
 
   static lv_indev_drv_t indev_drv;
   lv_indev_drv_init(&indev_drv);
@@ -206,4 +231,6 @@ void user_lvgl_init(void)
 #endif
 
   /* ESP32-S3-EYE has no external GT911; GPIO21 is used by the LCD clock. */
+
+  return ESP_OK;
 }

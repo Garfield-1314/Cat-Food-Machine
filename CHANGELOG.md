@@ -61,9 +61,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 最终内存布局：两块 57,600 字节摄像头 DMA 缓冲仅在推流时分配，发送副本按 JPEG 压缩大小向上取整到 4KiB；LVGL 使用单块 320×10 绘制缓冲和 20KiB 内存池
 - **SNTP Kconfig cleanup / SNTP 过时配置符号清理**: replaced deprecated `CONFIG_LWIP_SNTP` / `CONFIG_SNTP_*` symbols with the IDF 5.5 names (`CONFIG_LWIP_SNTP_MAX_SERVERS=3`), removing confgen "unknown symbol" warnings; smooth sync is configured via API (`sntp_set_sync_mode`) so behavior is unchanged
   - 用 IDF 5.5 的符号名替换过时的 `CONFIG_LWIP_SNTP` / `CONFIG_SNTP_*`（`CONFIG_LWIP_SNTP_MAX_SERVERS=3`），消除 confgen 未知符号警告；平滑同步由 API（`sntp_set_sync_mode`）配置，行为不变
-- **Simulator fixes / 模拟器修复**: added the missing `wifi_app_get_ip` stub and enabled the Montserrat 10 font in `sim/lv_conf.h` so `cat_food_sim` builds again
-  - 补上缺失的 `wifi_app_get_ip` 桩函数，并在 `sim/lv_conf.h` 启用 Montserrat 10 字体，`cat_food_sim` 恢复可构建
-
 ### Added / 新增
 
 - **OV2640 Camera / OV2640 摄像头**
