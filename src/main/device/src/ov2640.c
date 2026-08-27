@@ -17,46 +17,12 @@
 
 static const char *TAG = "ov2640";
 
-#define CAM_FRAME_BYTES (CAM_OUTPUT_WIDTH * CAM_OUTPUT_HEIGHT)
-
 /* DVP 控制器句柄 / sensor 句柄 */
 static esp_cam_ctlr_handle_t s_cam_handle = NULL;
 static esp_cam_sensor_device_t *s_sensor = NULL;
 static i2c_master_bus_handle_t s_i2c_bus = NULL;
 static esp_sccb_io_handle_t s_sccb_io = NULL;
 static esp_cam_sensor_format_t s_active_format;
-
-/* OV2640 register banks and the 240x240 crop/clock overrides.  The managed
- * sensor component exposes a JPEG 320x240 base mode; its public set_format()
- * API accepts a caller-owned format, so the project can derive the square
- * mode without modifying managed_components. */
-#define OV2640_BANK_SEL_REG  0xff
-#define OV2640_BANK_DSP      0x00
-#define OV2640_BANK_SENSOR   0x01
-#define OV2640_CLKRC_REG     0x11
-#define OV2640_R_DVP_SP_REG  0xd3
-
-typedef struct {
-  uint8_t reg;
-  uint8_t value;
-} ov2640_reg_setting_t;
-
-static const ov2640_reg_setting_t s_jpeg_240x240_overrides[] = {
-    {OV2640_BANK_SEL_REG, OV2640_BANK_DSP},
-    {0x51, 0x4b}, /* centered 240-pixel input window */
-    {0x52, 0x4a},
-    {0x53, 0x32},
-    {0x54, 0x00},
-    {0x55, 0x00},
-    {0x57, 0x00},
-    {0x5a, 0x3c}, /* output width / 4  = 60 */
-    {0x5b, 0x3c}, /* output height / 4 = 60 */
-    {0x5c, 0x00},
-    {OV2640_BANK_SEL_REG, OV2640_BANK_SENSOR},
-    {OV2640_CLKRC_REG, 0x83},
-    {OV2640_BANK_SEL_REG, OV2640_BANK_DSP},
-    {OV2640_R_DVP_SP_REG, 0x88},
-};
 
 /* 双 DMA 缓冲：采集持续进行，消费方只读取复制后的 JPEG。 */
 static uint8_t *s_buf[2] = {NULL, NULL};
@@ -66,12 +32,33 @@ static int s_latest_idx = -1;
 static size_t s_latest_size = 0;
 static uint32_t s_frame_id = 0;
 static uint32_t s_frame_state_version = 0;
+static uint32_t s_buffer_limit_hits = 0;
+static uint32_t s_completed_frames = 0;
+static uint32_t s_invalid_jpeg_frames = 0;
+static uint8_t s_last_frame_byte0 = 0;
+static uint8_t s_last_frame_byte1 = 0;
 static portMUX_TYPE s_frame_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static bool s_ready = false;
 static bool s_running = false;
 static uint32_t s_camera_users = 0;
 static SemaphoreHandle_t s_camera_mutex = NULL;
+
+/* DVP JPEG 模式在较大 OV2640 分辨率下可能被驱动误判为 size=0。
+ * 这里让驱动按字节流接收，再在任务上下文中查找 JPEG 结束标志。 */
+static size_t cam_find_jpeg_size(const uint8_t *buffer, size_t size)
+{
+  if (buffer == NULL || size < 4 || buffer[0] != 0xff || buffer[1] != 0xd8) {
+    return 0;
+  }
+
+  for (size_t off = 2; off + 1 < size; off++) {
+    if (buffer[off] == 0xff && buffer[off + 1] == 0xd9) {
+      return off + 2;
+    }
+  }
+  return 0;
+}
 
 /* ========== DVP 帧回调（ISR / 低优先级上下文） ========== */
 static bool cam_get_new_trans(esp_cam_ctlr_handle_t handle,
@@ -86,7 +73,7 @@ static bool cam_get_new_trans(esp_cam_ctlr_handle_t handle,
   s_write_idx = i;
   s_frame_state_version++;
   trans->buffer = s_buf[i];
-  trans->buflen = CAM_FRAME_BYTES;
+  trans->buflen = CAM_JPEG_BUFFER_BYTES;
   portEXIT_CRITICAL_ISR(&s_frame_mux);
   return false;
 }
@@ -101,6 +88,18 @@ static bool cam_trans_finished(esp_cam_ctlr_handle_t handle,
       portENTER_CRITICAL_ISR(&s_frame_mux);
       s_latest_size = trans->received_size;
       s_latest_idx = i;
+      const uint8_t *frame_buffer = (const uint8_t *)trans->buffer;
+      s_last_frame_byte0 = frame_buffer[0];
+      s_last_frame_byte1 = frame_buffer[1];
+      s_completed_frames++;
+      if (trans->received_size == 0) {
+        s_invalid_jpeg_frames++;
+      }
+      if (trans->received_size >= CAM_JPEG_BUFFER_BYTES) {
+        /* The DVP driver caps received_size at the DMA buffer capacity. Keep
+         * this counter in the callback and log it from task context below. */
+        s_buffer_limit_hits++;
+      }
       s_frame_id++;
       s_frame_state_version++;
       portEXIT_CRITICAL_ISR(&s_frame_mux);
@@ -164,7 +163,7 @@ static esp_err_t sensor_sccb_init(void)
   return ESP_OK;
 }
 
-/* 从组件自带的 JPEG 320x240 基础配置派生方形 JPEG 240x240。 */
+/* 选择组件自带的 JPEG 640x480 格式，并设置可调的 JPEG 质量。 */
 static esp_err_t sensor_set_format(void)
 {
   esp_cam_sensor_format_array_t fmt_array = {0};
@@ -176,21 +175,19 @@ static esp_err_t sensor_set_format(void)
     const esp_cam_sensor_format_t *f = &fmt_array.format_array[i];
     ESP_LOGI(TAG, "fmt[%d]: %s", i, f->name);
     if (f->format == ESP_CAM_SENSOR_PIXFORMAT_JPEG &&
-        f->width == 320 && f->height == 240) {
+        f->width == CAM_OUTPUT_WIDTH && f->height == CAM_OUTPUT_HEIGHT) {
       base_format = f;
       break;
     }
   }
   if (base_format == NULL) {
-    ESP_LOGE(TAG, "no JPEG 320x240 base format found for OV2640");
+    ESP_LOGE(TAG, "no JPEG %dx%d format found for OV2640", CAM_OUTPUT_WIDTH,
+             CAM_OUTPUT_HEIGHT);
     return ESP_ERR_NOT_SUPPORTED;
   }
 
   s_active_format = *base_format;
-  s_active_format.name = "DVP_8bit_JPEG_240x240_25fps";
-  s_active_format.width = CAM_OUTPUT_WIDTH;
-  s_active_format.height = CAM_OUTPUT_HEIGHT;
-  s_active_format.fps = 25;
+  s_active_format.name = "DVP_8bit_JPEG_640x480";
 
   esp_err_t ret = esp_cam_sensor_set_format(s_sensor, &s_active_format);
   if (ret != ESP_OK) {
@@ -198,21 +195,17 @@ static esp_err_t sensor_set_format(void)
     return ret;
   }
 
-  for (size_t i = 0;
-       i < sizeof(s_jpeg_240x240_overrides) /
-               sizeof(s_jpeg_240x240_overrides[0]);
-       i++) {
-    ret = esp_sccb_transmit_reg_a8v8(s_sccb_io,
-                                     s_jpeg_240x240_overrides[i].reg,
-                                     s_jpeg_240x240_overrides[i].value);
-    if (ret != ESP_OK) {
-      ESP_LOGE(TAG, "240x240 register setup failed at %u: %s", (unsigned)i,
-               esp_err_to_name(ret));
-      return ret;
-    }
+  int32_t jpeg_quality = CAM_JPEG_QUALITY;
+  ret = esp_cam_sensor_set_para_value(s_sensor, ESP_CAM_SENSOR_JPEG_QUALITY,
+                                      &jpeg_quality, sizeof(jpeg_quality));
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "set JPEG quality %d failed: %s", jpeg_quality,
+             esp_err_to_name(ret));
+    return ret;
   }
 
-  ESP_LOGI(TAG, "format in use: %s", s_active_format.name);
+  ESP_LOGI(TAG, "format in use: %s, JPEG quality: %d", s_active_format.name,
+           jpeg_quality);
   return ESP_OK;
 }
 
@@ -246,14 +239,17 @@ esp_err_t ov2640_camera_init(void)
   esp_cam_ctlr_dvp_config_t dvp_config = {
       .ctlr_id = 0,
       .clk_src = CAM_CLK_SRC_DEFAULT,
-      .h_res = CAM_OUTPUT_WIDTH,
-      .v_res = CAM_OUTPUT_HEIGHT,
+      .h_res = CAM_DVP_DMA_WIDTH,
+      .v_res = CAM_DVP_DMA_HEIGHT,
       .dma_burst_size = 64,
       .pin = &pin_cfg,
       .bk_buffer_dis = 1,
       /* 与 ESP32-S3-EYE 官方例程一致，关闭 DVP 字节交换 */
       .byte_swap_en = 0,
-      .pic_format_jpeg = 1,
+      .input_data_color_type = CAM_CTLR_COLOR_RGB565,
+      /* Work around the ESP32-S3 DVP JPEG size=0 issue for OV2640 >= VGA.
+       * The sensor still outputs JPEG; the application finds FFD9 below. */
+      .pic_format_jpeg = 0,
       .xclk_freq = CAM_XCLK_FREQ_HZ,
   };
 
@@ -288,8 +284,7 @@ esp_err_t ov2640_camera_init(void)
   return ESP_OK;
 }
 
-/* 首次启动时分配帧缓冲。未启用 PSRAM 时直接使用内部 SRAM，
- * 避免每次 Web 连接都先做一次必然失败的 PSRAM 分配。 */
+/* 首次启动时分配帧缓冲，优先使用 PSRAM DMA 内存。 */
 static esp_err_t cam_alloc_frame_buffers(void)
 {
   if (s_buf[0] != NULL && s_buf[1] != NULL) {
@@ -299,15 +294,18 @@ static esp_err_t cam_alloc_frame_buffers(void)
   for (int i = 0; i < 2; i++) {
 #ifdef CONFIG_SPIRAM
     s_buf[i] = esp_cam_ctlr_alloc_buffer(
-        s_cam_handle, CAM_FRAME_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+        s_cam_handle, CAM_JPEG_BUFFER_BYTES,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
     if (s_buf[i] == NULL) {
       ESP_LOGW(TAG, "PSRAM frame buffer %d alloc failed, try internal", i);
-      s_buf[i] = esp_cam_ctlr_alloc_buffer(s_cam_handle, CAM_FRAME_BYTES,
-                                            MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+      s_buf[i] = esp_cam_ctlr_alloc_buffer(
+          s_cam_handle, CAM_JPEG_BUFFER_BYTES,
+          MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     }
 #else
-    s_buf[i] = esp_cam_ctlr_alloc_buffer(s_cam_handle, CAM_FRAME_BYTES,
-                                          MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    s_buf[i] = esp_cam_ctlr_alloc_buffer(
+        s_cam_handle, CAM_JPEG_BUFFER_BYTES,
+        MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
 #endif
     if (s_buf[i] == NULL) {
       ESP_LOGE(TAG, "frame buffer %d alloc failed", i);
@@ -317,8 +315,10 @@ static esp_err_t cam_alloc_frame_buffers(void)
       }
       return ESP_ERR_NO_MEM;
     }
+    memset(s_buf[i], 0, CAM_JPEG_BUFFER_BYTES);
   }
-  ESP_LOGI(TAG, "frame buffers allocated (%d bytes each)", CAM_FRAME_BYTES);
+  ESP_LOGI(TAG, "frame buffers allocated (%d bytes each, PSRAM preferred)",
+           CAM_JPEG_BUFFER_BYTES);
   return ESP_OK;
 }
 
@@ -337,6 +337,11 @@ static void cam_free_frame_buffers(void)
   s_latest_idx = -1;
   s_latest_size = 0;
   s_frame_id = 0;
+  s_buffer_limit_hits = 0;
+  s_completed_frames = 0;
+  s_invalid_jpeg_frames = 0;
+  s_last_frame_byte0 = 0;
+  s_last_frame_byte1 = 0;
   s_frame_state_version++;
   portEXIT_CRITICAL(&s_frame_mux);
 }
@@ -350,7 +355,7 @@ esp_err_t ov2640_camera_start(void)
     return ESP_OK;
   }
 
-  /* 首次启动时分配帧缓冲（内部 SRAM 有限，不采集时不占用） */
+  /* 首次启动时分配帧缓冲（不采集时不占用） */
   esp_err_t ret = cam_alloc_frame_buffers();
   if (ret != ESP_OK) {
     return ret;
@@ -362,6 +367,11 @@ esp_err_t ov2640_camera_start(void)
   s_latest_idx = -1;
   s_latest_size = 0;
   s_frame_id = 0;
+  s_buffer_limit_hits = 0;
+  s_completed_frames = 0;
+  s_invalid_jpeg_frames = 0;
+  s_last_frame_byte0 = 0;
+  s_last_frame_byte1 = 0;
   s_frame_state_version++;
   portEXIT_CRITICAL(&s_frame_mux);
 
@@ -467,8 +477,14 @@ esp_err_t ov2640_camera_copy_jpeg_frame(uint8_t *dst, size_t capacity,
     int latest_idx;
     int write_idx;
     size_t latest_size;
+    size_t jpeg_size;
     uint32_t latest_frame_id;
     uint32_t version_before;
+    uint32_t buffer_limit_hits;
+    uint32_t completed_frames;
+    uint32_t invalid_jpeg_frames;
+    uint8_t last_frame_byte0;
+    uint8_t last_frame_byte1;
 
     portENTER_CRITICAL(&s_frame_mux);
     latest_idx = s_latest_idx;
@@ -476,19 +492,56 @@ esp_err_t ov2640_camera_copy_jpeg_frame(uint8_t *dst, size_t capacity,
     latest_size = s_latest_size;
     latest_frame_id = s_frame_id;
     version_before = s_frame_state_version;
+    buffer_limit_hits = s_buffer_limit_hits;
+    s_buffer_limit_hits = 0;
+    completed_frames = s_completed_frames;
+    invalid_jpeg_frames = s_invalid_jpeg_frames;
+    last_frame_byte0 = s_last_frame_byte0;
+    last_frame_byte1 = s_last_frame_byte1;
     portEXIT_CRITICAL(&s_frame_mux);
 
-    if (latest_idx < 0 || latest_size == 0 || latest_size > CAM_FRAME_BYTES ||
+    if (buffer_limit_hits > 0) {
+      ESP_LOGE(TAG,
+               "JPEG reached frame buffer limit (%u bytes); frame may be truncated",
+               CAM_JPEG_BUFFER_BYTES);
+    }
+
+    if (latest_idx < 0 || latest_size == 0 ||
+        latest_size > CAM_JPEG_BUFFER_BYTES ||
         latest_idx == write_idx) {
+      static TickType_t last_no_frame_log = 0;
+      TickType_t now = xTaskGetTickCount();
+      if (now - last_no_frame_log >= pdMS_TO_TICKS(2000)) {
+        ESP_LOGW(TAG,
+                 "no valid JPEG: completed=%u invalid=%u latest_size=%u head=%02x%02x",
+                 (unsigned)completed_frames, (unsigned)invalid_jpeg_frames,
+                 (unsigned)latest_size, last_frame_byte0, last_frame_byte1);
+        last_no_frame_log = now;
+      }
       return ESP_ERR_NOT_FOUND;
     }
 
-    *size = latest_size;
-    if (dst == NULL || capacity < latest_size) {
+    jpeg_size = cam_find_jpeg_size(s_buf[latest_idx], latest_size);
+    if (jpeg_size == 0) {
+      portENTER_CRITICAL(&s_frame_mux);
+      s_invalid_jpeg_frames++;
+      portEXIT_CRITICAL(&s_frame_mux);
+      static TickType_t last_no_eoi_log = 0;
+      TickType_t now = xTaskGetTickCount();
+      if (now - last_no_eoi_log >= pdMS_TO_TICKS(2000)) {
+        ESP_LOGW(TAG, "JPEG EOI not found: raw_size=%u head=%02x%02x",
+                 (unsigned)latest_size, last_frame_byte0, last_frame_byte1);
+        last_no_eoi_log = now;
+      }
+      return ESP_ERR_NOT_FOUND;
+    }
+
+    *size = jpeg_size;
+    if (dst == NULL || capacity < jpeg_size) {
       return ESP_ERR_INVALID_SIZE;
     }
 
-    memcpy(dst, s_buf[latest_idx], latest_size);
+    memcpy(dst, s_buf[latest_idx], jpeg_size);
 
     portENTER_CRITICAL(&s_frame_mux);
     bool unchanged = version_before == s_frame_state_version &&

@@ -1,16 +1,14 @@
 # Set target chip
 CONFIG_IDF_TARGET="esp32s3"
 
-# Cat board: module is N16R8 (has 8MB octal PSRAM) BUT the board routes
-# GPIO35/36/37 (octal PSRAM data lines D2/D3/D4) to the ST7789 LCD (CLK/MOSI/CS).
-# Enabling PSRAM causes MSPI bus contention -> boot hang -> TG1WDT reset loop.
-# Keep PSRAM DISABLED on this board. Only enable on a board with free PSRAM pins:
-# CONFIG_SPIRAM=y
-# CONFIG_SPIRAM_MODE_OCT=y
+# ESP32-S3-EYE: enable Octal PSRAM.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+# Previous custom board: comment the two lines above and use:
 # CONFIG_SPIRAM is not set
 
-# N16 module: write the detected 16 MB flash size into the image header.
-CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+# ESP32-S3-EYE uses 8 MB flash.
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 
 # OV2640 camera
 CONFIG_CAMERA_OV2640=y

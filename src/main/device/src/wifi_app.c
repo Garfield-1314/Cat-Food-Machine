@@ -20,8 +20,8 @@ static const char *TAG = "wifi_app";
  * 调试用 WiFi 配置：默认留空，使用 NVS 配置。
  * 填写 test_ssid 后，开机直接使用该 SSID/密码连接，不读取 NVS。
  */
-static const char test_ssid[] = "";
-static const char test_key[] = "";
+static const char test_ssid[] = "singtown_us";
+static const char test_key[] = "zhizhiyuanyuan";
 
 /* NVS key for WiFi config */
 #define NVS_NAMESPACE  "wifi_config"

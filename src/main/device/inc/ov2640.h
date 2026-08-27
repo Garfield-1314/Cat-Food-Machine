@@ -30,9 +30,21 @@ extern "C" {
 
 #define CAM_XCLK_FREQ_HZ   (20 * 1000 * 1000)
 
-/* Cat Food Machine OV2640 方形 JPEG 格式：240x240 */
-#define CAM_OUTPUT_WIDTH   240
-#define CAM_OUTPUT_HEIGHT  240
+/* Web 推流使用 OV2640 硬件 JPEG 640x480 模式。 */
+#define CAM_OUTPUT_WIDTH       640
+#define CAM_OUTPUT_HEIGHT      480
+
+/* OV2640 JPEG quality: 数值越小画质越高，合法范围为 1..63。 */
+#define CAM_JPEG_QUALITY       10
+
+/*
+ * The ESP32-S3 DVP JPEG path can report zero for larger OV2640 JPEG frames.
+ * Capture the DVP byte stream as a raw buffer and find the JPEG EOI marker in
+ * application code instead. The sensor output remains 640x480 JPEG.
+ */
+#define CAM_DVP_DMA_WIDTH      2048
+#define CAM_DVP_DMA_HEIGHT     CAM_OUTPUT_HEIGHT
+#define CAM_JPEG_BUFFER_BYTES  (2 * 1024 * 1024)
 
 /**
  * @brief 初始化 OV2640 摄像头（DVP + SCCB + sensor）
