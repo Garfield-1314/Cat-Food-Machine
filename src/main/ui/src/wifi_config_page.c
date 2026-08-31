@@ -383,7 +383,11 @@ static void start_scan(void)
         scan_poll_timer = lv_timer_create(scan_poll_timer_cb, 100, NULL);
     }
 
-    xTaskCreate(wifi_scan_task, "wifi_scan", 4096, NULL, 5, NULL);
+    if (xTaskCreate(wifi_scan_task, "wifi_scan", 4096, NULL, 5, NULL) != pdPASS) {
+        s_scan_task_running = false;
+        s_scan_err = ESP_ERR_NO_MEM;
+        s_scan_done = true;
+    }
 }
 
 /* ========== 模式切换 ========== */
@@ -416,12 +420,10 @@ static void rescan_btn_cb(lv_event_t *e)
 
 lv_obj_t *create_wifi_config_page(void)
 {
-    if (wifi_config_page != NULL) {
-        lv_scr_load(wifi_config_page);
-        return wifi_config_page;
-    }
-
     wifi_config_page = lv_obj_create(NULL);
+    if (wifi_config_page == NULL) {
+        return NULL;
+    }
     lv_obj_set_style_bg_color(wifi_config_page, lv_color_hex(0x003a57), LV_PART_MAIN);
 
     /* 标题 */

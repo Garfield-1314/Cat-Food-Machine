@@ -9,6 +9,7 @@ SRCS "main.c"
 "device/src/user_lvgl.c"
 "device/src/wifi_app.c"
 "device/src/sntp_time.c"
+"device/src/ir_light.c"
 "device/src/ov2640.c"
 "device/src/video_stream.c"
 
@@ -19,5 +20,5 @@ SRCS "main.c"
 "ui/src/feeding_page.c"
 
                     INCLUDE_DIRS "."
-                    REQUIRES esp_lcd esp_driver_i2c esp_driver_cam esp_http_server nvs_flash esp_timer esp_wifi esp_netif esp_event lwip
+                    REQUIRES esp_lcd esp_driver_gpio esp_driver_i2c esp_driver_cam esp_http_server nvs_flash esp_timer esp_wifi esp_netif esp_event lwip
 )

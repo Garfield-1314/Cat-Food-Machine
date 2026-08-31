@@ -36,10 +36,11 @@ static const char test_key[] = "";
 
 /* Static variables */
 static int s_retry_num = 0;
-static bool s_is_connected = false;
-static bool s_connecting = false;  /* 正在连接中 */
-static bool s_user_switch = false; /* 用户主动切换/断开引起的断开事件，抑制自动重试 */
-static char s_current_ssid[32] = {0};
+static volatile bool s_is_connected = false;
+static volatile bool s_connecting = false;  /* 正在连接中 */
+static volatile bool s_user_switch = false; /* 用户主动切换/断开引起的断开事件，抑制自动重试 */
+static volatile bool s_scan_in_progress = false;
+static char s_current_ssid[33] = {0};
 static char s_current_ip[16] = {0};
 static wifi_connected_cb_t s_connected_cb = NULL;
 static esp_timer_handle_t s_retry_timer = NULL;
@@ -48,12 +49,21 @@ static esp_timer_handle_t s_retry_timer = NULL;
 static void retry_timer_cb(void *arg)
 {
     (void)arg;
+    if (s_is_connected || s_connecting || s_scan_in_progress) {
+        ESP_LOGI(TAG, "Periodic retry skipped (WiFi operation already in progress)");
+        return;
+    }
+
     ESP_LOGI(TAG, "Periodic retry (10 min interval)...");
     s_retry_num = 0;
-    s_connecting = true;
-    esp_wifi_connect();
-    /* 重新装载单次定时器，实现每 10 分钟重试一次 */
-    esp_timer_start_once(s_retry_timer, RETRY_TIMER_PERIOD_MS * 1000ULL);
+    esp_err_t ret = esp_wifi_connect();
+    if (ret == ESP_OK) {
+        s_connecting = true;
+    } else {
+        s_connecting = false;
+        ESP_LOGW(TAG, "Periodic WiFi connect failed: %s", esp_err_to_name(ret));
+    }
+    /* 定时器使用周期模式，不在回调中重新操作自身句柄。 */
 }
 
 static void stop_retry_timer(void)
@@ -76,9 +86,20 @@ static void start_retry_timer(void)
         .name = "wifi_retry",
         .dispatch_method = ESP_TIMER_TASK,
     };
-    if (esp_timer_create(&timer_args, &s_retry_timer) == ESP_OK) {
-        esp_timer_start_once(s_retry_timer, RETRY_TIMER_PERIOD_MS * 1000ULL);
+    esp_err_t ret = esp_timer_create(&timer_args, &s_retry_timer);
+    if (ret == ESP_OK) {
+        ret = esp_timer_start_periodic(s_retry_timer,
+                                       RETRY_TIMER_PERIOD_MS * 1000ULL);
+    }
+    if (ret == ESP_OK) {
         ESP_LOGI(TAG, "10 min retry timer started");
+    } else {
+        ESP_LOGE(TAG, "failed to start 10 min retry timer: %s",
+                 esp_err_to_name(ret));
+        if (s_retry_timer != NULL) {
+            esp_timer_delete(s_retry_timer);
+            s_retry_timer = NULL;
+        }
     }
 }
 
@@ -89,7 +110,11 @@ static void event_handler(void *arg, esp_event_base_t event_base,
         s_is_connected = false;
         s_current_ip[0] = '\0';
         s_connecting = false;
-        if (s_user_switch) {
+        if (s_scan_in_progress) {
+            /* 扫描前主动中断连接，扫描期间禁止自动重连抢占 WiFi。 */
+            s_user_switch = false;
+            ESP_LOGI(TAG, "disconnect for WiFi scan, skip auto retry");
+        } else if (s_user_switch) {
             /* 用户主动切换/断开引起的事件：不自动重试，等用户重新发起连接 */
             s_user_switch = false;
             ESP_LOGI(TAG, "user-initiated disconnect, skip auto retry");
@@ -149,7 +174,7 @@ void wifi_app_init(void)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
 
     /* 调试配置优先；为空时才从 NVS 读取已保存的 WiFi 配置 */
-    char saved_ssid[32] = {0};
+    char saved_ssid[33] = {0};
     char saved_pass[64] = {0};
     bool has_test_config = (test_ssid[0] != '\0');
     bool has_saved_config = false;
@@ -300,17 +325,37 @@ esp_err_t wifi_app_scan(wifi_ap_info_t *results, uint16_t *count, uint16_t max_c
         .scan_time.active.max = 300,
     };
 
-    esp_err_t ret = esp_wifi_scan_start(&scan_cfg, true);
+    /* 自动连接中的 STA 不允许扫描。先中断连接，并在驱动状态稳定后重试。 */
+    bool resume_periodic_retry = s_connecting;
+    s_scan_in_progress = true;
+    if (resume_periodic_retry) {
+        s_user_switch = true;
+        esp_err_t disconnect_ret = esp_wifi_disconnect();
+        if (disconnect_ret != ESP_OK) {
+            ESP_LOGW(TAG, "WiFi disconnect before scan failed: %s",
+                     esp_err_to_name(disconnect_ret));
+        }
+        s_connecting = false;
+    }
+
+    esp_err_t ret = ESP_ERR_WIFI_STATE;
+    for (int attempt = 0; attempt < 10; attempt++) {
+        ret = esp_wifi_scan_start(&scan_cfg, true);
+        if (ret != ESP_ERR_WIFI_STATE) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Scan start failed: %s", esp_err_to_name(ret));
-        return ret;
+        goto scan_finished;
     }
 
     uint16_t ap_num = 0;
     ret = esp_wifi_scan_get_ap_num(&ap_num);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Scan get_ap_num failed: %s", esp_err_to_name(ret));
-        return ret;
+        goto scan_finished;
     }
 
     if (ap_num > max_count) {
@@ -319,19 +364,21 @@ esp_err_t wifi_app_scan(wifi_ap_info_t *results, uint16_t *count, uint16_t max_c
 
     if (ap_num == 0) {
         *count = 0;
-        return ESP_OK;
+        ret = ESP_OK;
+        goto scan_finished;
     }
 
     wifi_ap_record_t *aps = calloc(ap_num, sizeof(wifi_ap_record_t));
     if (aps == NULL) {
-        return ESP_ERR_NO_MEM;
+        ret = ESP_ERR_NO_MEM;
+        goto scan_finished;
     }
 
     ret = esp_wifi_scan_get_ap_records(&ap_num, aps);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Scan get_ap_records failed: %s", esp_err_to_name(ret));
         free(aps);
-        return ret;
+        goto scan_finished;
     }
 
     for (uint16_t i = 0; i < ap_num; i++) {
@@ -343,7 +390,17 @@ esp_err_t wifi_app_scan(wifi_ap_info_t *results, uint16_t *count, uint16_t max_c
     *count = ap_num;
 
     free(aps);
-    return ESP_OK;
+
+    ret = ESP_OK;
+
+scan_finished:
+    s_scan_in_progress = false;
+    s_user_switch = false;
+    if (resume_periodic_retry && !s_is_connected) {
+        /* 扫描结束后恢复原本的后台周期重试。 */
+        start_retry_timer();
+    }
+    return ret;
 }
 
 bool wifi_app_is_connected(void)
@@ -407,7 +464,7 @@ bool wifi_app_load_config(char *ssid, char *password)
         return false;
     }
 
-    size_t ssid_len = 32;
+    size_t ssid_len = 33;
     size_t pass_len = 64;
     err = nvs_get_str(nvs_handle, NVS_KEY_SSID, ssid, &ssid_len);
     if (err != ESP_OK) {

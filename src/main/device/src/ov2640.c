@@ -1,4 +1,5 @@
 #include "device/inc/ov2640.h"
+#include "device/inc/ir_light.h"
 
 #include <string.h>
 
@@ -229,6 +230,12 @@ esp_err_t ov2640_camera_init(void)
 {
   esp_err_t ret = ESP_OK;
 
+  /* 先将补光灯配置为输出低电平，确保摄像头未使用时保持关闭。 */
+  ret = ir_light_init();
+  if (ret != ESP_OK) {
+    return ret;
+  }
+
   if (s_camera_mutex == NULL) {
     s_camera_mutex = xSemaphoreCreateMutex();
     if (s_camera_mutex == NULL) {
@@ -368,7 +375,7 @@ esp_err_t ov2640_camera_start(void)
     return ESP_ERR_INVALID_STATE;
   }
   if (s_running) {
-    return ESP_OK;
+    return ir_light_on();
   }
 
   /* 首次启动时分配帧缓冲（不采集时不占用） */
@@ -391,27 +398,58 @@ esp_err_t ov2640_camera_start(void)
   s_frame_state_version++;
   portEXIT_CRITICAL(&s_frame_mux);
 
+  bool sensor_stream_started = false;
+  bool controller_enabled = false;
+  bool controller_started = false;
+
+  /* 补光灯先于传感器出流打开，保证首帧也能获得夜视补光。 */
+  ret = ir_light_on();
+  if (ret != ESP_OK) {
+    goto start_failed;
+  }
+
   /* 按官方例程先让传感器开始输出，再启动 DVP 控制器 */
   int enable = 1;
   ret = esp_cam_sensor_ioctl(s_sensor, ESP_CAM_SENSOR_IOC_S_STREAM,
                              &enable);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "sensor stream start failed");
-    return ret;
+    goto start_failed;
   }
+  sensor_stream_started = true;
 
   ret = esp_cam_ctlr_enable(s_cam_handle);
-  ESP_RETURN_ON_ERROR(ret, TAG, "ctrlr enable failed");
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "ctrlr enable failed: %s", esp_err_to_name(ret));
+    goto start_failed;
+  }
+  controller_enabled = true;
 
   ret = esp_cam_ctlr_start(s_cam_handle);
   if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "ctrlr start failed");
-    return ret;
+    ESP_LOGE(TAG, "ctrlr start failed: %s", esp_err_to_name(ret));
+    goto start_failed;
   }
+  controller_started = true;
 
   s_running = true;
   ESP_LOGI(TAG, "camera stream started");
   return ESP_OK;
+
+start_failed:
+  /* 启动失败时回滚所有已启动的资源，尤其不能让补光灯保持点亮。 */
+  if (controller_started) {
+    esp_cam_ctlr_stop(s_cam_handle);
+  }
+  if (sensor_stream_started) {
+    int disable = 0;
+    esp_cam_sensor_ioctl(s_sensor, ESP_CAM_SENSOR_IOC_S_STREAM, &disable);
+  }
+  if (controller_enabled) {
+    esp_cam_ctlr_disable(s_cam_handle);
+  }
+  ir_light_off();
+  return ret;
 }
 
 esp_err_t ov2640_camera_acquire(void)
@@ -439,17 +477,36 @@ esp_err_t ov2640_camera_acquire(void)
 
 esp_err_t ov2640_camera_stop(void)
 {
+  esp_err_t ret = ESP_OK;
+
   if (s_running) {
-    esp_cam_ctlr_stop(s_cam_handle);
+    esp_err_t step_ret = esp_cam_ctlr_stop(s_cam_handle);
+    if (step_ret != ESP_OK) {
+      ret = step_ret;
+    }
     int enable = 0;
-    esp_cam_sensor_ioctl(s_sensor, ESP_CAM_SENSOR_IOC_S_STREAM, &enable);
-    esp_cam_ctlr_disable(s_cam_handle);
+    step_ret = esp_cam_sensor_ioctl(s_sensor, ESP_CAM_SENSOR_IOC_S_STREAM,
+                                    &enable);
+    if (ret == ESP_OK && step_ret != ESP_OK) {
+      ret = step_ret;
+    }
+    step_ret = esp_cam_ctlr_disable(s_cam_handle);
+    if (ret == ESP_OK && step_ret != ESP_OK) {
+      ret = step_ret;
+    }
     s_running = false;
     ESP_LOGI(TAG, "camera stream stopped");
   }
-  /* 无使用者后释放帧缓冲，归还内部 SRAM */
+
+  /* 即使当前状态已是 stopped，也强制确保补光灯关闭。 */
+  esp_err_t light_ret = ir_light_off();
+  if (ret == ESP_OK && light_ret != ESP_OK) {
+    ret = light_ret;
+  }
+
+  /* 无使用者后释放帧缓冲，归还 PSRAM（或内部 RAM fallback） */
   cam_free_frame_buffers();
-  return ESP_OK;
+  return ret;
 }
 
 esp_err_t ov2640_camera_release(void)
