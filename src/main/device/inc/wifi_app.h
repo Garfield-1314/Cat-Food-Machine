@@ -85,7 +85,7 @@ void wifi_app_save_config(const char *ssid, const char *password);
 
 /**
  * @brief 从 NVS 读取 WiFi 配置
- * @param ssid  输出 SSID 缓冲区 (至少 32 字节)
+ * @param ssid  输出 SSID 缓冲区 (至少 33 字节，含结尾 '\0')
  * @param password 输出密码缓冲区 (至少 64 字节)
  * @return true 读取成功，false 无保存的配置
  */

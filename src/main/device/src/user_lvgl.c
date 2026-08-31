@@ -87,8 +87,9 @@ static void lvgl_touch_read_cb(lv_indev_drv_t *indev_drv,
 }
 #endif
 
-// 定义LVGL缓冲区 (32字节对齐以适配Cache/DMA)
-// 单缓冲 + 10 行（320x10），占用 6.25 KiB 内部 SRAM。
+// 定义LVGL绘制缓冲区 (32字节对齐以适配Cache/DMA)
+// 单缓冲 + 10 行（320x10），占用 6.25 KiB；优先分配到 PSRAM，失败时
+// 回退到内部 DMA SRAM。
 #define LVGL_BUF_ROWS 10
 #define LVGL_BUF_SIZE (LCD_WIDTH * LVGL_BUF_ROWS)
 static lv_color_t *lvgl_buf1 = NULL;

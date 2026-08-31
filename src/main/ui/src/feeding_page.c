@@ -429,13 +429,10 @@ static void save_btn_cb(lv_event_t *e)
 /* ========== 创建页面 ========== */
 lv_obj_t *create_feeding_page(void)
 {
-    /* 如果页面已存在，直接切换 */
-    if (feeding_page != NULL) {
-        lv_scr_load(feeding_page);
-        return feeding_page;
-    }
-
     feeding_page = lv_obj_create(NULL);
+    if (feeding_page == NULL) {
+        return NULL;
+    }
     lv_obj_set_style_bg_color(feeding_page, lv_color_hex(0x003a57), LV_PART_MAIN);
 
     /* 标题 */

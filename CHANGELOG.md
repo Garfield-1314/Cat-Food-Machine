@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed / 变更
 
+- **Single saved WiFi profile / 单个已保存 WiFi 配置**
+  - Documented that the current Station-mode firmware stores one SSID/password pair in NVS; saving another network overwrites the previous profile and the latest profile is used for automatic connection after reboot
+  - 明确当前 Station 模式固件仅在 NVS 中保存一组 SSID/密码；保存新网络会覆盖旧配置，设备重启后自动连接最后保存的网络
+  - Clarified that the WiFi page's 24-item scan list is temporary and is not a multi-network credential list
+  - 说明 WiFi 页面显示的最多 24 个扫描结果只是临时扫描列表，不是多网络凭据列表
+
 - **ESP32-S3-EYE OV2640 high-quality web stream / ESP32-S3-EYE OV2640 高画质 Web 推流**
   - Enabled the ESP32-S3-EYE LCD/pin profile and Octal PSRAM configuration for the EYE hardware mode; the Cat-board profile remains separate
   - 启用 ESP32-S3-EYE 的 LCD/引脚配置与八线 PSRAM 配置用于 EYE 硬件模式；Cat 板配置保持独立
