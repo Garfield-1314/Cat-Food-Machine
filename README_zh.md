@@ -78,7 +78,6 @@ git submodule update --init --recursive --progress
 ```bash
 cd src
 source ./esp32libraries/esp-idf/export.sh
-idf.py set-target esp32s3
 idf.py build
 idf.py flash monitor
 ```
