@@ -17,9 +17,9 @@ esp_err_t feeder_motor_init(void);
 
 /**
  * @brief 投喂指定仓位数（异步，专用 FreeRTOS 任务 + GPIO 忙等发脉冲）
- *        1 个仓位 = 电机旋转 90°
+ *        1 个仓位 = 电机旋转 60°
  *
- * @param slots 仓位数 (1 ~ 10)
+ * @param slots 仓位数 (1 ~ 6)
  */
 esp_err_t feeder_motor_dispense(uint8_t slots);
 
@@ -33,7 +33,7 @@ bool feeder_motor_is_idle(void);
  * @brief 同步投喂（阻塞版）
  *        直接在当前上下文中执行步进脉冲，直到旋转完成
  *
- * @param slots 仓位数 (1 ~ 10)
+ * @param slots 仓位数 (1 ~ 6)
  */
 esp_err_t feeder_motor_dispense_sync(uint8_t slots);
 

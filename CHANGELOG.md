@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed / 变更
 
+- **Feeder hopper changed from 4 bins to 6 bins / 食仓由 4 仓改为 6 仓**
+  - Per-slot output rotation reduced from 90° to 60° (360° / 6); `STEPS_PER_SLOT` recalculated from 3,600 to `3200 × (60° × 4.5 / 360°) = 2400` microsteps
+  - 每仓位输出轴旋转量从 90° 调整为 60°（360° / 6），`STEPS_PER_SLOT` 按公式重新计算：`3200 × (60° × 4.5 / 360°) = 2400` 微步
+  - Maximum feeding amount per manual/scheduled feed reduced from 10 to 6 slots (UI slider, schedule sanitize, and motor-driver validation); previously stored schedules with amount 7–10 are clamped to 6 on load
+  - 每次手动/定时投喂的仓位上限由 10 调整为 6（UI 滑块、计划校验与电机驱动校验）；此前保存的 7–10 仓位计划在加载时会被夹取为 6
+
 - **Single saved WiFi profile / 单个已保存 WiFi 配置**
   - Documented that the current Station-mode firmware stores one SSID/password pair in NVS; saving another network overwrites the previous profile and the latest profile is used for automatic connection after reboot
   - 明确当前 Station 模式固件仅在 NVS 中保存一组 SSID/密码；保存新网络会覆盖旧配置，设备重启后自动连接最后保存的网络

@@ -323,7 +323,7 @@ static void open_edit_dialog(int index)
 
     amount_slider = lv_slider_create(edit_dlg);
     lv_obj_set_size(amount_slider, 120, 20);
-    lv_slider_set_range(amount_slider, 1, 10);
+    lv_slider_set_range(amount_slider, 1, 6);
     lv_slider_set_value(amount_slider, item ? item->amount : 1, LV_ANIM_OFF);
     lv_obj_align(amount_slider, LV_ALIGN_TOP_LEFT, 170, 65);
     lv_obj_set_style_bg_color(amount_slider, lv_color_hex(0x003a57), LV_PART_MAIN);

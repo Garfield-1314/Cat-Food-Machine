@@ -55,7 +55,7 @@ static void sanitize_item(feed_schedule_item_t *item)
     if (item->hour > 23) item->hour = 0;
     if (item->minute > 59) item->minute = 0;
     if (item->amount < 1) item->amount = 1;
-    if (item->amount > 10) item->amount = 10;
+    if (item->amount > 6) item->amount = 6;
     if (item->every_days < 1) item->every_days = 1;
     if (item->every_days > MAX_EVERY_DAYS) item->every_days = MAX_EVERY_DAYS;
 }

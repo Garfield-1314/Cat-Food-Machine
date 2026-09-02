@@ -21,7 +21,7 @@ extern "C" {
 typedef struct {
     uint8_t hour;        /* 小时 0-23 */
     uint8_t minute;      /* 分钟 0-59 */
-    uint8_t amount;      /* 每次投喂仓位数量 1-10 */
+    uint8_t amount;      /* 每次投喂仓位数量 1-6 */
     bool    enabled;     /* 是否启用 */
     uint8_t every_days;  /* 每隔几天投喂 1-14 */
 } feed_schedule_item_t;
