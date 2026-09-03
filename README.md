@@ -10,7 +10,7 @@ An ESP32-S3 based **intelligent cat feeder** with touchscreen UI, WiFi connectiv
 - **Capacitive Touch** — GT911 touch sensor (I2C) for smooth user interaction
 - **Multi-page Interface** — Feeding home page (default), feeding control, settings, and WiFi configuration
 - **Scheduled Feeding** — Up to 8 schedules with a fixed feeding time (HH:MM) and a repeat interval in days (daily / every other day / every 3 days, ...), with NVS persistence
-- **Stepper Motor Dispensing** — A4988 driven stepper motor, 1 slot = 90° rotation
+- **Stepper Motor Dispensing** — A4988 driven stepper motor, 6-bin hopper, 1 slot = 60° rotation
 - **OV2640 Camera** — OV2640 DVP 8-bit parallel interface, native 640×480 JPEG captured on demand
 - **WiFi Connectivity** — Station mode with one saved credential set, on-screen WiFi configuration and device IP display
 - **On-demand LAN Video Streaming** — HTTP-MJPEG stream at `http://<device-ip>/stream`, with a self-reconnecting browser page at `http://<device-ip>/`
@@ -281,7 +281,7 @@ to 32 first.
 - Pressing Connect saves the selected SSID/password before starting the
   connection task, so a failed connection remains the profile used at the next
   boot until another network is saved.
-- The feeding page stores up to 8 schedules. Each schedule supports 1–10 slots,
+- The feeding page stores up to 8 schedules. Each schedule supports 1–6 slots,
   a time in hours and minutes, an enabled flag, and a 1–7 day repeat interval.
   The UI selects minutes in 5-minute steps.
 - The settings page shows IDF/LVGL versions, chip revision, touch controller,
@@ -298,7 +298,7 @@ to 32 first.
 ```c
 #include "include.h"
 
-// Dispense a specific number of slots (1 ~ 10)
+// Dispense a specific number of slots (1 ~ 6)
 manual_feeding_start(2);  // Dispense 2 slots
 ```
 

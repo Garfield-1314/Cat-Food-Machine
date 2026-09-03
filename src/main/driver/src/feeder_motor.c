@@ -17,10 +17,10 @@ static const char *TAG = "feeder_motor";
  *   - 步进电机步距角 1.8° → 200 整步/转
  *   - A4988 16 细分 → 3200 微步/电机转
  *   - 齿轮减速：GT20(20齿) → 90齿，减速比 4.5:1
- *   - 1 个仓位 = 输出轴旋转 90°
- *   计算：3200 微步 × (90° × 4.5 / 360°) = 3600 微步/仓位
+ *   - 6 仓食仓：1 个仓位 = 输出轴旋转 60°（360° / 6）
+ *   计算：3200 微步 × (60° × 4.5 / 360°) = 2400 微步/仓位
  */
-#define STEPS_PER_SLOT   3600
+#define STEPS_PER_SLOT   2400
 
 /* STEP 脉冲宽度 (微秒) */
 #define STEP_PULSE_US    500    /* 0.5ms 高电平 */
@@ -132,8 +132,8 @@ bool feeder_motor_is_idle(void)
 /* ========== 投喂（异步，专用RTOS任务） ========== */
 esp_err_t feeder_motor_dispense(uint8_t slots)
 {
-    if (slots == 0 || slots > 10) {
-        ESP_LOGW(TAG, "Invalid slot count: %d (must be 1-10)", slots);
+    if (slots == 0 || slots > 6) {
+        ESP_LOGW(TAG, "Invalid slot count: %d (must be 1-6)", slots);
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -156,8 +156,8 @@ esp_err_t feeder_motor_dispense(uint8_t slots)
 /* ========== 同步投喂（阻塞） ========== */
 esp_err_t feeder_motor_dispense_sync(uint8_t slots)
 {
-    if (slots == 0 || slots > 10) {
-        ESP_LOGW(TAG, "Invalid slot count: %d (must be 1-10)", slots);
+    if (slots == 0 || slots > 6) {
+        ESP_LOGW(TAG, "Invalid slot count: %d (must be 1-6)", slots);
         return ESP_ERR_INVALID_ARG;
     }
 
