@@ -208,6 +208,7 @@ when a client requests the stream, and stops when the client disconnects.
 
 - Browser page: `http://<device-ip>/`
 - Raw MJPEG stream: `http://<device-ip>/stream`
+- Web control page: `http://<device-ip>/`, with status, manual feeding, and schedule management
 - Format: native OV2640 JPEG 640×480, sent at up to 10 FPS
 - Scope: LAN only, no authentication in the current version
 - Limit: one simultaneous stream client; an additional client receives HTTP 503
@@ -223,6 +224,27 @@ when a client requests the stream, and stops when the client disconnects.
 
 > The camera feed is viewed through the Web stream; camera and Web buffers use
 > PSRAM so the internal RAM remains available for LVGL and the system.
+
+### Web Feeding Control API
+
+After WiFi obtains an IP address, open `http://<device-ip>/` for the combined
+camera and feeding-control page. It uses the same NVS-backed schedules as the
+LCD UI. Manual feeding uses slot counts (1–6); up to 8 schedules can repeat at
+1–7 day intervals.
+
+The page uses these same-origin JSON endpoints:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/status` | WiFi, time, next schedule, and motor status |
+| GET | `/api/schedules` | Schedules and the current `version` |
+| PUT | `/api/schedules` | Validate and save the complete `version` + `items` payload |
+| POST | `/api/feed` | Manually feed with a body such as `{"amount":2}` |
+
+`POST /api/feed` returns HTTP `202` when the motor starts and `409` while another
+feed is running. Saving with a stale schedule version also returns `409`; reload
+the schedules before retrying. The HTTP service is LAN-only; never forward port
+80 to the public Internet.
 
 ### Memory and Network Resource Profile
 

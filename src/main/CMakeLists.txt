@@ -20,5 +20,5 @@ SRCS "main.c"
 "ui/src/feeding_page.c"
 
                     INCLUDE_DIRS "."
-                    REQUIRES esp_lcd esp_driver_gpio esp_driver_i2c esp_driver_cam esp_http_server nvs_flash esp_timer esp_wifi esp_netif esp_event lwip
+                    REQUIRES esp_lcd esp_driver_gpio esp_driver_i2c esp_driver_cam esp_http_server json nvs_flash esp_timer esp_wifi esp_netif esp_event lwip
 )

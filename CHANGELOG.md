@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] — 未发布
+
+### Added / 新增
+
+- **LAN Web feeding control / 局域网 Web 喂食控制**
+  - Expanded the existing camera page with manual feeding, schedule editing,
+    device status, and JSON endpoints at `/api/status`, `/api/schedules`, and
+    `/api/feed`
+  - 在原有摄像头页面中增加手动喂食、投喂计划编辑、设备状态和 JSON API；
+    API 路径为 `/api/status`、`/api/schedules` 和 `/api/feed`
+  - Added schedule snapshots, in-memory versions, and atomic NVS replacement
+    so stale Web edits cannot overwrite newer LCD/Web changes
+  - 增加计划快照、内存版本号和原子 NVS 替换，防止过期的 Web 编辑覆盖较新的
+    LCD/Web 配置；手动喂食接口返回电机忙和参数错误
+
 ## [0.2.0] — 未发布
 
 ### Fixed / 修复

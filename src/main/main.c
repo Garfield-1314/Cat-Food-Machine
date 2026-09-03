@@ -6,7 +6,8 @@ static const char *TAG = "main";
 static lv_obj_t *s_feeding_popup = NULL;
 static volatile bool s_feeding_active = false;
 static volatile bool s_feeding_done = false;
-static uint8_t s_feeding_amount = 0;
+static volatile uint8_t s_feeding_amount = 0;
+static portMUX_TYPE s_feeding_state_mux = portMUX_INITIALIZER_UNLOCKED;
 
 /* ========== 背光自动熄灭 ========== */
 #define IDLE_TIMEOUT_MS  300000   /* 5 分钟无操作熄灭背光 */
@@ -42,27 +43,87 @@ static void restore_backlight_lvgl(void)
     }
 }
 
-/* 手动喂食：外部可调用，喂指定仓位数 */
-void manual_feeding_start(uint8_t slots)
+static void feeding_state_snapshot(bool *active, bool *done, uint8_t *amount)
 {
-    if (s_feeding_active) {
-        ESP_LOGW(TAG, "Feeding already in progress");
-        return;
+    portENTER_CRITICAL(&s_feeding_state_mux);
+    if (active != NULL) {
+        *active = s_feeding_active;
     }
+    if (done != NULL) {
+        *done = s_feeding_done;
+    }
+    if (amount != NULL) {
+        *amount = s_feeding_amount;
+    }
+    portEXIT_CRITICAL(&s_feeding_state_mux);
+}
 
-    /* 如果背光已熄灭，喂食时自动唤醒 */
-    restore_backlight_lvgl();
+static void feeding_state_mark_done(void)
+{
+    portENTER_CRITICAL(&s_feeding_state_mux);
+    s_feeding_done = true;
+    portEXIT_CRITICAL(&s_feeding_state_mux);
+}
+
+static void feeding_state_clear(void)
+{
+    portENTER_CRITICAL(&s_feeding_state_mux);
+    s_feeding_active = false;
+    s_feeding_done = false;
+    portEXIT_CRITICAL(&s_feeding_state_mux);
+}
+
+static esp_err_t feeding_start_common(uint8_t slots)
+{
+    bool active;
+    feeding_state_snapshot(&active, NULL, NULL);
+    if (active || !feeder_motor_is_idle()) {
+        ESP_LOGW(TAG, "Feeding already in progress");
+        return ESP_ERR_INVALID_STATE;
+    }
 
     esp_err_t ret = feeder_motor_dispense(slots);
     if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Manual feeding rejected: %s", esp_err_to_name(ret));
-        return;
+        ESP_LOGW(TAG, "Feeding rejected: %s", esp_err_to_name(ret));
+        return ret;
     }
 
+    portENTER_CRITICAL(&s_feeding_state_mux);
     s_feeding_amount = slots;
     s_feeding_active = true;
     s_feeding_done = false;
-    ESP_LOGI(TAG, "Manual feeding started: %d slot(s)", slots);
+    portEXIT_CRITICAL(&s_feeding_state_mux);
+
+    /* The LVGL timer performs the actual display/backlight work. */
+    s_backlight_restore_pending = true;
+    return ESP_OK;
+}
+
+/* 手动喂食：外部可调用，喂指定仓位数 */
+esp_err_t manual_feeding_start(uint8_t slots)
+{
+    esp_err_t ret = feeding_start_common(slots);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Manual feeding started: %d slot(s)", slots);
+    }
+    return ret;
+}
+
+void feeding_get_status(bool *active, uint8_t *amount)
+{
+    bool current_active;
+    bool current_done;
+    uint8_t current_amount;
+
+    feeding_state_snapshot(&current_active, &current_done, &current_amount);
+    current_active = current_active && !current_done;
+
+    if (active != NULL) {
+        *active = current_active;
+    }
+    if (amount != NULL) {
+        *amount = current_active ? current_amount : 0;
+    }
 }
 
 /* 投喂触发回调：调度器匹配到投喂时间时调用（非 LVGL 上下文！） */
@@ -75,15 +136,11 @@ static void on_feeding_triggered(uint8_t amount)
         s_backlight_restore_pending = true;
     }
 
-    esp_err_t ret = feeder_motor_dispense(amount);
+    esp_err_t ret = feeding_start_common(amount);
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Scheduled feeding rejected: %s", esp_err_to_name(ret));
         return;
     }
-
-    s_feeding_amount = amount;
-    s_feeding_active = true;
-    s_feeding_done = false;
 }
 
 /* LVGL 定时器回调：管理投喂弹窗的显示与隐藏（在 LVGL 上下文中执行） */
@@ -117,12 +174,18 @@ static void feeding_popup_timer_cb(lv_timer_t *timer)
     }
 
     /* 轮询电机状态：完成则标记 done */
-    if (s_feeding_active && !s_feeding_done && feeder_motor_is_idle()) {
-        s_feeding_done = true;
+    bool feeding_active;
+    bool feeding_done;
+    uint8_t feeding_amount;
+    feeding_state_snapshot(&feeding_active, &feeding_done, &feeding_amount);
+
+    if (feeding_active && !feeding_done && feeder_motor_is_idle()) {
+        feeding_state_mark_done();
+        feeding_state_snapshot(&feeding_active, &feeding_done, &feeding_amount);
         ESP_LOGI(TAG, "Feeding done (motor idle)");
     }
 
-    if (s_feeding_active && !s_feeding_done && s_feeding_popup == NULL) {
+    if (feeding_active && !feeding_done && s_feeding_popup == NULL) {
         /* 弹窗创建在顶层悬浮层上，切屏不会被销毁 */
         s_feeding_popup = lv_obj_create(lv_layer_top());
         lv_obj_set_size(s_feeding_popup, 220, 100);
@@ -144,7 +207,7 @@ static void feeding_popup_timer_cb(lv_timer_t *timer)
         /* 详细信息 */
         lv_obj_t *info = lv_label_create(s_feeding_popup);
         char buf[32];
-        snprintf(buf, sizeof(buf), "%d slot(s)", s_feeding_amount);
+        snprintf(buf, sizeof(buf), "%d slot(s)", feeding_amount);
         lv_label_set_text(info, buf);
         lv_obj_set_style_text_font(info, &lv_font_montserrat_18, 0);
         lv_obj_set_style_text_color(info, lv_color_white(), 0);
@@ -153,14 +216,13 @@ static void feeding_popup_timer_cb(lv_timer_t *timer)
         ESP_LOGI(TAG, "Feeding popup shown");
     }
 
-    if (s_feeding_done && s_feeding_popup != NULL) {
+    if (feeding_done && s_feeding_popup != NULL) {
         /* 投喂完成，关闭弹窗 */
         if (lv_obj_is_valid(s_feeding_popup)) {
             lv_obj_del(s_feeding_popup);
         }
         s_feeding_popup = NULL;
-        s_feeding_active = false;
-        s_feeding_done = false;
+        feeding_state_clear();
         ESP_LOGI(TAG, "Feeding popup closed");
     }
 }

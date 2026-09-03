@@ -72,8 +72,8 @@ static void feeding_page_delete_cb(lv_event_t *e)
 
 static lv_obj_t *create_list_row(int index)
 {
-    const feed_schedule_item_t *item = feed_schedule_get_item(index);
-    if (item == NULL) return NULL;
+    feed_schedule_item_t item;
+    if (feed_schedule_get_item_copy(index, &item) != ESP_OK) return NULL;
 
     /* 行容器 */
     lv_obj_t *row = lv_obj_create(list_cont);
@@ -88,7 +88,7 @@ static lv_obj_t *create_list_row(int index)
 
     /* 时间文本: "HH:MM" */
     char time_str[16];
-    snprintf(time_str, sizeof(time_str), "%02d:%02d", item->hour, item->minute);
+    snprintf(time_str, sizeof(time_str), "%02d:%02d", item.hour, item.minute);
     lv_obj_t *time_lbl = lv_label_create(row);
     lv_label_set_text(time_lbl, time_str);
     lv_obj_set_style_text_font(time_lbl, &lv_font_montserrat_14, 0);
@@ -97,10 +97,10 @@ static lv_obj_t *create_list_row(int index)
 
     /* 间隔天数文本: "Daily" / "Every 2d" */
     char every_str[16];
-    if (item->every_days <= 1) {
+    if (item.every_days <= 1) {
         snprintf(every_str, sizeof(every_str), "Daily");
     } else {
-        snprintf(every_str, sizeof(every_str), "Every %dd", item->every_days);
+        snprintf(every_str, sizeof(every_str), "Every %dd", item.every_days);
     }
     lv_obj_t *every_lbl = lv_label_create(row);
     lv_label_set_text(every_lbl, every_str);
@@ -110,7 +110,7 @@ static lv_obj_t *create_list_row(int index)
 
     /* 投喂量文本: "xN slots" */
     char amt_str[16];
-    snprintf(amt_str, sizeof(amt_str), "x%d", item->amount);
+    snprintf(amt_str, sizeof(amt_str), "x%d", item.amount);
     lv_obj_t *amt_lbl = lv_label_create(row);
     lv_label_set_text(amt_lbl, amt_str);
     lv_obj_set_style_text_font(amt_lbl, &lv_font_montserrat_14, 0);
@@ -119,9 +119,9 @@ static lv_obj_t *create_list_row(int index)
 
     /* 启用/禁用指示 */
     lv_obj_t *status_lbl = lv_label_create(row);
-    lv_label_set_text(status_lbl, item->enabled ? "ON" : "OFF");
+    lv_label_set_text(status_lbl, item.enabled ? "ON" : "OFF");
     lv_obj_set_style_text_color(status_lbl,
-        item->enabled ? lv_color_hex(0x00FF00) : lv_color_hex(0xFF0000), 0);
+        item.enabled ? lv_color_hex(0x00FF00) : lv_color_hex(0xFF0000), 0);
     lv_obj_align(status_lbl, LV_ALIGN_RIGHT_MID, -10, 0);
 
     /* 点击整行进入编辑 */
@@ -243,7 +243,9 @@ static void open_edit_dialog(int index)
     }
     edit_index = index;
 
-    const feed_schedule_item_t *item = (index >= 0) ? feed_schedule_get_item(index) : NULL;
+    feed_schedule_item_t item;
+    bool has_item = index >= 0 &&
+                    feed_schedule_get_item_copy(index, &item) == ESP_OK;
 
     /* 创建全屏覆盖的对话框 */
     edit_dlg = lv_obj_create(feeding_page);
@@ -292,8 +294,8 @@ static void open_edit_dialog(int index)
     lv_obj_set_size(hour_roller, 60, 80);
     lv_obj_align(hour_roller, LV_ALIGN_TOP_LEFT, 10, 65);
     lv_obj_set_style_text_color(hour_roller, lv_color_white(), 0);
-    if (item) {
-        lv_roller_set_selected(hour_roller, item->hour, LV_ANIM_OFF);
+    if (has_item) {
+        lv_roller_set_selected(hour_roller, item.hour, LV_ANIM_OFF);
     }
 
     /* --- 分钟选择 --- */
@@ -309,8 +311,8 @@ static void open_edit_dialog(int index)
     lv_obj_set_size(min_roller, 60, 80);
     lv_obj_align(min_roller, LV_ALIGN_TOP_LEFT, 90, 65);
     lv_obj_set_style_text_color(min_roller, lv_color_white(), 0);
-    if (item) {
-        int min_idx = item->minute / 5;
+    if (has_item) {
+        int min_idx = item.minute / 5;
         if (min_idx > 11) min_idx = 11;
         lv_roller_set_selected(min_roller, min_idx, LV_ANIM_OFF);
     }
@@ -324,7 +326,7 @@ static void open_edit_dialog(int index)
     amount_slider = lv_slider_create(edit_dlg);
     lv_obj_set_size(amount_slider, 120, 20);
     lv_slider_set_range(amount_slider, 1, 6);
-    lv_slider_set_value(amount_slider, item ? item->amount : 1, LV_ANIM_OFF);
+    lv_slider_set_value(amount_slider, has_item ? item.amount : 1, LV_ANIM_OFF);
     lv_obj_align(amount_slider, LV_ALIGN_TOP_LEFT, 170, 65);
     lv_obj_set_style_bg_color(amount_slider, lv_color_hex(0x003a57), LV_PART_MAIN);
     lv_obj_set_style_bg_color(amount_slider, lv_color_hex(0x005a77), LV_PART_INDICATOR);
@@ -333,7 +335,7 @@ static void open_edit_dialog(int index)
 
     amount_label = lv_label_create(edit_dlg);
     char amt_str[8];
-    snprintf(amt_str, sizeof(amt_str), "%d", item ? item->amount : 1);
+    snprintf(amt_str, sizeof(amt_str), "%d", has_item ? item.amount : 1);
     lv_label_set_text(amount_label, amt_str);
     lv_obj_set_style_text_color(amount_label, lv_color_hex(0x00FF00), 0);
     lv_obj_align_to(amount_label, amount_slider, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
@@ -349,8 +351,8 @@ static void open_edit_dialog(int index)
     lv_obj_set_size(every_roller, 60, 60);
     lv_obj_align(every_roller, LV_ALIGN_TOP_LEFT, 10, 175);
     lv_obj_set_style_text_color(every_roller, lv_color_white(), 0);
-    if (item) {
-        int idx = (item->every_days < 1) ? 0 : item->every_days - 1;
+    if (has_item) {
+        int idx = (item.every_days < 1) ? 0 : item.every_days - 1;
         if (idx > MAX_EVERY_DAYS - 1) idx = MAX_EVERY_DAYS - 1;
         lv_roller_set_selected(every_roller, idx, LV_ANIM_OFF);
     }
@@ -363,8 +365,8 @@ static void open_edit_dialog(int index)
 
     enable_switch = lv_switch_create(edit_dlg);
     lv_obj_align(enable_switch, LV_ALIGN_BOTTOM_RIGHT, -20, -20);
-    if (item) {
-        if (item->enabled) {
+    if (has_item) {
+        if (item.enabled) {
             lv_obj_add_state(enable_switch, LV_STATE_CHECKED);
         }
     } else {

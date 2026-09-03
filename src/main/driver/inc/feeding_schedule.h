@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <time.h>
 #include "esp_err.h"
 
@@ -23,7 +24,7 @@ typedef struct {
     uint8_t minute;      /* 分钟 0-59 */
     uint8_t amount;      /* 每次投喂仓位数量 1-6 */
     bool    enabled;     /* 是否启用 */
-    uint8_t every_days;  /* 每隔几天投喂 1-14 */
+    uint8_t every_days;  /* 每隔几天投喂 1-7 */
 } feed_schedule_item_t;
 
 /**
@@ -63,6 +64,43 @@ const feed_schedule_item_t *feed_schedule_get_item(int index);
  * @return true 找到下一次投喂，false 表示时间无效或没有启用的计划
  */
 bool feed_schedule_get_next_time(time_t *next_time);
+
+/**
+ * @brief Copy all schedule items while holding the schedule lock.
+ *
+ * The returned data is copied into caller-owned storage; no internal pointer
+ * escapes the lock, so this API is safe for HTTP handlers and other tasks.
+ *
+ * @param items   Output array.
+ * @param capacity Number of entries available in @p items.
+ * @param count   Output number of entries copied.
+ * @param version Output in-memory configuration version.
+ */
+esp_err_t feed_schedule_get_snapshot(feed_schedule_item_t *items,
+                                     size_t capacity,
+                                     size_t *count,
+                                     uint32_t *version);
+
+/**
+ * @brief Copy one schedule item while holding the schedule lock.
+ */
+esp_err_t feed_schedule_get_item_copy(int index, feed_schedule_item_t *item);
+
+/**
+ * @brief Replace the complete schedule and persist it atomically.
+ *
+ * The operation fails with ESP_ERR_INVALID_STATE when @p expected_version is
+ * stale.  On NVS failure the in-memory schedule is restored as well.
+ *
+ * @param items           New entries, or NULL when count is zero.
+ * @param count           Number of new entries (0 ~ MAX_SCHEDULE_ITEMS).
+ * @param expected_version Version obtained from feed_schedule_get_snapshot().
+ * @param new_version    Output version after a successful replacement.
+ */
+esp_err_t feed_schedule_replace_and_save(const feed_schedule_item_t *items,
+                                         size_t count,
+                                         uint32_t expected_version,
+                                         uint32_t *new_version);
 
 /**
  * @brief 设置指定索引的投喂计划项

@@ -23,6 +23,7 @@ static const char *TAG = "feeding_schedule";
 /* ========== 内部状态 ========== */
 static feed_schedule_item_t s_items[MAX_SCHEDULE_ITEMS];
 static int s_count = 0;
+static uint32_t s_version = 0;
 
 static TaskHandle_t s_scheduler_task = NULL;
 static feeding_callback_t s_callback = NULL;
@@ -60,6 +61,23 @@ static void sanitize_item(feed_schedule_item_t *item)
     if (item->every_days > MAX_EVERY_DAYS) item->every_days = MAX_EVERY_DAYS;
 }
 
+static bool item_is_valid(const feed_schedule_item_t *item)
+{
+    return item != NULL &&
+           item->hour <= 23 &&
+           item->minute <= 59 &&
+           item->amount >= 1 && item->amount <= 6 &&
+           item->every_days >= 1 && item->every_days <= MAX_EVERY_DAYS;
+}
+
+static void bump_version_locked(void)
+{
+    s_version++;
+    if (s_version == 0) {
+        s_version = 1;
+    }
+}
+
 /* 清理旧版"每周期次数+间隔"配置键 */
 static void erase_obsolete_keys(nvs_handle_t nvs)
 {
@@ -78,6 +96,7 @@ esp_err_t feed_schedule_load(void)
         if (err == ESP_ERR_NVS_NOT_FOUND) {
             ESP_LOGW(TAG, "NVS namespace '%s' not found, using defaults", NVS_NAMESPACE);
             s_count = 0;
+            s_version = 0;
             return ESP_OK;
         }
         ESP_LOGE(TAG, "Failed to open NVS: %s", esp_err_to_name(err));
@@ -91,6 +110,7 @@ esp_err_t feed_schedule_load(void)
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "No schedule count found, using defaults");
         s_count = 0;
+        s_version = 0;
         nvs_close(nvs);
         unlock();
         return ESP_OK;
@@ -124,6 +144,7 @@ esp_err_t feed_schedule_load(void)
     }
 
     s_count = count;
+    s_version = 0;
     nvs_close(nvs);
     unlock();
 
@@ -207,6 +228,43 @@ const feed_schedule_item_t *feed_schedule_get_item(int index)
     }
     unlock();
     return item;
+}
+
+esp_err_t feed_schedule_get_item_copy(int index, feed_schedule_item_t *item)
+{
+    if (item == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    lock();
+    if (index < 0 || index >= s_count) {
+        unlock();
+        return ESP_ERR_INVALID_ARG;
+    }
+    memcpy(item, &s_items[index], sizeof(*item));
+    unlock();
+    return ESP_OK;
+}
+
+esp_err_t feed_schedule_get_snapshot(feed_schedule_item_t *items,
+                                     size_t capacity,
+                                     size_t *count,
+                                     uint32_t *version)
+{
+    if (items == NULL || count == NULL || version == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    lock();
+    if (capacity < (size_t)s_count) {
+        unlock();
+        return ESP_ERR_INVALID_SIZE;
+    }
+    memcpy(items, s_items, (size_t)s_count * sizeof(s_items[0]));
+    *count = (size_t)s_count;
+    *version = s_version;
+    unlock();
+    return ESP_OK;
 }
 
 bool feed_schedule_get_next_time(time_t *next_time)
@@ -298,6 +356,7 @@ esp_err_t feed_schedule_set_item(int index, const feed_schedule_item_t *item)
     }
     memcpy(&s_items[index], item, sizeof(feed_schedule_item_t));
     sanitize_item(&s_items[index]);
+    bump_version_locked();
     unlock();
 
     ESP_LOGI(TAG, "Set item %d: %02d:%02d every %dd amount=%d enabled=%d",
@@ -322,6 +381,7 @@ esp_err_t feed_schedule_add_item(const feed_schedule_item_t *item)
     sanitize_item(&s_items[s_count]);
     s_last_triggered[s_count] = 0;  /* 重置触发记录 */
     s_count++;
+    bump_version_locked();
     unlock();
 
     ESP_LOGI(TAG, "Added item %d: %02d:%02d every %dd amount=%d enabled=%d",
@@ -345,10 +405,100 @@ esp_err_t feed_schedule_remove_item(int index)
         s_last_triggered[i] = s_last_triggered[i + 1];
     }
     s_count--;
+    bump_version_locked();
     unlock();
 
     ESP_LOGI(TAG, "Removed item at index %d, count now=%d", index, s_count);
     return ESP_OK;
+}
+
+esp_err_t feed_schedule_replace_and_save(const feed_schedule_item_t *items,
+                                         size_t count,
+                                         uint32_t expected_version,
+                                         uint32_t *new_version)
+{
+    if (count > MAX_SCHEDULE_ITEMS || (count > 0 && items == NULL) ||
+        new_version == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    feed_schedule_item_t replacement[MAX_SCHEDULE_ITEMS];
+    if (count > 0) {
+        memcpy(replacement, items, count * sizeof(replacement[0]));
+        for (size_t i = 0; i < count; i++) {
+            if (!item_is_valid(&replacement[i])) {
+                return ESP_ERR_INVALID_ARG;
+            }
+        }
+    }
+
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS for replacement: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+
+    lock();
+    if (expected_version != s_version) {
+        unlock();
+        nvs_close(nvs);
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    feed_schedule_item_t old_items[MAX_SCHEDULE_ITEMS];
+    time_t old_last_triggered[MAX_SCHEDULE_ITEMS];
+    memcpy(old_items, s_items, sizeof(old_items));
+    memcpy(old_last_triggered, s_last_triggered, sizeof(old_last_triggered));
+    int old_count = s_count;
+    uint32_t old_version = s_version;
+
+    memcpy(s_items, replacement, count * sizeof(s_items[0]));
+    s_count = (int)count;
+    memset(s_items + count, 0, (MAX_SCHEDULE_ITEMS - count) * sizeof(s_items[0]));
+    memset(s_last_triggered + count, 0,
+           (MAX_SCHEDULE_ITEMS - count) * sizeof(s_last_triggered[0]));
+
+    /* Preserve trigger guards by index for existing entries.  New entries
+     * start at zero, matching feed_schedule_add_item(). */
+    size_t preserved = (old_count < (int)count) ? (size_t)old_count : count;
+    memcpy(s_last_triggered, old_last_triggered,
+           preserved * sizeof(s_last_triggered[0]));
+
+    int32_t saved_count = s_count;
+    err = nvs_set_i32(nvs, KEY_COUNT, saved_count);
+    if (err == ESP_OK) {
+        for (int i = 0; i < saved_count; i++) {
+            char key[16];
+            snprintf(key, sizeof(key), KEY_ITEM_FMT, i);
+            err = nvs_set_blob(nvs, key, &s_items[i], sizeof(s_items[i]));
+            if (err != ESP_OK) {
+                break;
+            }
+        }
+    }
+    if (err == ESP_OK) {
+        erase_obsolete_keys(nvs);
+        err = nvs_commit(nvs);
+    }
+
+    if (err != ESP_OK) {
+        memcpy(s_items, old_items, sizeof(s_items));
+        memcpy(s_last_triggered, old_last_triggered, sizeof(s_last_triggered));
+        s_count = old_count;
+        s_version = old_version;
+        ESP_LOGE(TAG, "Failed to persist replacement: %s", esp_err_to_name(err));
+    } else {
+        bump_version_locked();
+        *new_version = s_version;
+        ESP_LOGI(TAG, "Replaced and saved %d schedule items (version=%lu)",
+                 s_count, (unsigned long)s_version);
+    }
+
+    nvs_close(nvs);
+    unlock();
+    return err;
 }
 
 /* ========== 天数轮换与调度器 ========== */
