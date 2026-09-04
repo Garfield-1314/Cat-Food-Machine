@@ -11,6 +11,8 @@ static uint8_t s_feeding_amount = 0;
 /* ========== 背光自动熄灭 ========== */
 #define IDLE_TIMEOUT_MS  300000   /* 5 分钟无操作熄灭背光 */
 static bool s_backlight_dimmed = false;
+/* 熄屏前的用户亮度；不能从驱动当前值恢复，因为熄屏会把当前值设为 0。 */
+static uint8_t s_backlight_restore_brightness = 100;
 
 /* 非 LVGL 上下文（调度器任务）请求恢复背光，由 LVGL 定时器消费 */
 static volatile bool s_backlight_restore_pending = false;
@@ -34,11 +36,11 @@ static void restore_backlight_lvgl(void)
 {
     if (s_backlight_dimmed) {
         s_backlight_dimmed = false;
-        uint8_t saved = lcd_st7789_get_brightness();
-        if (saved == 0) saved = 100;
-        lcd_st7789_set_brightness(saved);
+        uint8_t brightness = s_backlight_restore_brightness;
+        if (brightness == 0) brightness = 100;
+        lcd_st7789_set_brightness(brightness);
         lv_disp_trig_activity(NULL);  /* 重置 LVGL 空闲计时，防止立即再次熄灭 */
-        ESP_LOGI(TAG, "Backlight restored (%d%%)", saved);
+        ESP_LOGI(TAG, "Backlight restored (%d%%)", brightness);
     }
 }
 
@@ -103,17 +105,16 @@ static void feeding_popup_timer_cb(lv_timer_t *timer)
     if (inactive_ms > IDLE_TIMEOUT_MS && !s_backlight_dimmed) {
         /* 超过 5 分钟无操作，熄灭背光 */
         s_backlight_dimmed = true;
+        /* 先保存用户亮度，再把实际输出关闭。 */
+        uint8_t current_brightness = lcd_st7789_get_brightness();
+        if (current_brightness > 0) {
+            s_backlight_restore_brightness = current_brightness;
+        }
         lcd_st7789_set_brightness(0);
         ESP_LOGI(TAG, "Backlight dimmed (idle %lu ms)", (unsigned long)inactive_ms);
     } else if (inactive_ms < 2000 && s_backlight_dimmed) {
         /* 检测到新操作（最近2秒内有触摸），恢复亮度 */
-        s_backlight_dimmed = false;
-        uint8_t saved = lcd_st7789_get_brightness();
-        if (saved == 0) {
-            saved = 100;  /* 防止刚开机未设亮度时无法恢复 */
-        }
-        lcd_st7789_set_brightness(saved);
-        ESP_LOGI(TAG, "Backlight restored to %d%%", saved);
+        restore_backlight_lvgl();
     }
 
     /* 轮询电机状态：完成则标记 done */
@@ -224,6 +225,7 @@ esp_err_t user_component_init(void)
             nvs_close(nvs);
         }
         lcd_st7789_set_brightness(brightness);
+        s_backlight_restore_brightness = brightness;
         ESP_LOGI(TAG, "Backlight brightness restored to %d%%", brightness);
     }
 
