@@ -100,6 +100,17 @@ esp_err_t ov2640_camera_copy_jpeg_frame(uint8_t *dst, size_t capacity,
                                         size_t *size, uint32_t *frame_id);
 
 /**
+ * @brief 读取传感器单字节寄存器（供红外补光自动亮度闭环使用）
+ *
+ * 仅在摄像头推流期间调用有效（推流稳态下传感器处于 Sensor bank）。
+ *
+ * @param[in] reg 寄存器地址
+ * @param[out] value 寄存器值
+ * @return esp_err_t 成功返回 ESP_OK
+ */
+esp_err_t ov2640_read_sensor_reg(uint8_t reg, uint8_t *value);
+
+/**
  * @brief 检查摄像头是否就绪（已初始化并检测到 OV2640）
  *
  * @return true 就绪

@@ -1,5 +1,6 @@
 #include "device/inc/ov2640.h"
 #include "device/inc/ir_light.h"
+#include "device/inc/ir_light_auto.h"
 
 #include <string.h>
 
@@ -164,6 +165,28 @@ static esp_err_t sensor_sccb_init(void)
   return ESP_OK;
 }
 
+/* 读取传感器单字节寄存器（用于红外补光自动亮度闭环）。
+ * 仅允许在推流期间调用：推流稳态下 OV2640 处于 Sensor bank，
+ * 该路径只读不写，不会干扰摄像头驱动的 bank 缓存。 */
+esp_err_t ov2640_read_sensor_reg(uint8_t reg, uint8_t *value)
+{
+  if (s_sensor == NULL || value == NULL) {
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  esp_cam_sensor_reg_val_t reg_val = {
+      .regaddr = reg,
+      .value = 0,
+  };
+  esp_err_t ret =
+      esp_cam_sensor_ioctl(s_sensor, ESP_CAM_SENSOR_IOC_G_REG, &reg_val);
+  if (ret != ESP_OK) {
+    return ret;
+  }
+  *value = (uint8_t)reg_val.value;
+  return ESP_OK;
+}
+
 /* 选择组件自带的 JPEG 640x480 格式，并设置可调的 JPEG 质量。 */
 static esp_err_t sensor_set_format(void)
 {
@@ -234,6 +257,12 @@ esp_err_t ov2640_camera_init(void)
   ret = ir_light_init();
   if (ret != ESP_OK) {
     return ret;
+  }
+
+  /* 注册红外补光自动亮度闭环的寄存器读取通道（推流期间生效）。 */
+  ret = ir_light_auto_init(ov2640_read_sensor_reg);
+  if (ret != ESP_OK) {
+    ESP_LOGW(TAG, "ir light auto init failed: %s", esp_err_to_name(ret));
   }
 
   if (s_camera_mutex == NULL) {
@@ -432,12 +461,19 @@ esp_err_t ov2640_camera_start(void)
   }
   controller_started = true;
 
+  /* 出流稳定后启动补光自动亮度闭环（按画面明暗在 0~上限内调 PWM）。
+   * 启动失败不视为致命：保留当前亮度继续推流。 */
+  if (ir_light_auto_start() != ESP_OK) {
+    ESP_LOGW(TAG, "ir light auto brightness failed to start");
+  }
+
   s_running = true;
   ESP_LOGI(TAG, "camera stream started");
   return ESP_OK;
 
 start_failed:
   /* 启动失败时回滚所有已启动的资源，尤其不能让补光灯保持点亮。 */
+  ir_light_auto_stop();
   if (controller_started) {
     esp_cam_ctlr_stop(s_cam_handle);
   }
@@ -498,8 +534,13 @@ esp_err_t ov2640_camera_stop(void)
     ESP_LOGI(TAG, "camera stream stopped");
   }
 
-  /* 即使当前状态已是 stopped，也强制确保补光灯关闭。 */
-  esp_err_t light_ret = ir_light_off();
+  /* 先停自动亮度闭环任务（避免与熄灯竞争），再关灯。
+   * 即使当前状态已是 stopped，也强制确保补光灯关闭。 */
+  esp_err_t light_ret = ir_light_auto_stop();
+  if (ret == ESP_OK && light_ret != ESP_OK) {
+    ret = light_ret;
+  }
+  light_ret = ir_light_off();
   if (ret == ESP_OK && light_ret != ESP_OK) {
     ret = light_ret;
   }
