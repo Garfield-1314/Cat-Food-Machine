@@ -44,6 +44,7 @@ static bool s_ready = false;
 static bool s_running = false;
 static uint32_t s_camera_users = 0;
 static SemaphoreHandle_t s_camera_mutex = NULL;
+static int8_t s_ae_level = CAM_AE_LEVEL;
 
 /* DVP JPEG 模式在较大 OV2640 分辨率下可能被驱动误判为 size=0。
  * 这里让驱动按字节流接收，再在任务上下文中查找 JPEG 结束标志。 */
@@ -218,6 +219,16 @@ static esp_err_t sensor_set_format(void)
                                       &vflip, sizeof(vflip));
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "set vflip failed: %s", esp_err_to_name(ret));
+    return ret;
+  }
+
+  /* 应用自动曝光等级（用户可在设置页调整）。 */
+  int32_t ae_level = s_ae_level;
+  ret = esp_cam_sensor_set_para_value(s_sensor, ESP_CAM_SENSOR_AE_LEVEL,
+                                      &ae_level, sizeof(ae_level));
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "set AE level %ld failed: %s", (long)ae_level,
+             esp_err_to_name(ret));
     return ret;
   }
 
@@ -638,4 +649,36 @@ esp_err_t ov2640_camera_copy_jpeg_frame(uint8_t *dst, size_t capacity,
 bool ov2640_camera_is_ready(void)
 {
   return s_ready;
+}
+
+esp_err_t ov2640_camera_set_ae_level(int8_t level)
+{
+  if (level < -2) {
+    level = -2;
+  }
+  if (level > 2) {
+    level = 2;
+  }
+  s_ae_level = level;
+
+  /* 传感器未就绪时仅保存，init 时在 sensor_set_format 中应用。 */
+  if (s_sensor == NULL) {
+    return ESP_OK;
+  }
+
+  int32_t ae_level = level;
+  esp_err_t ret = esp_cam_sensor_set_para_value(
+      s_sensor, ESP_CAM_SENSOR_AE_LEVEL, &ae_level, sizeof(ae_level));
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "set AE level %d failed: %s", level,
+             esp_err_to_name(ret));
+    return ret;
+  }
+  ESP_LOGI(TAG, "AE level set to %d", level);
+  return ESP_OK;
+}
+
+int8_t ov2640_camera_get_ae_level(void)
+{
+  return s_ae_level;
 }
