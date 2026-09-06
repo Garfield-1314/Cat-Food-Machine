@@ -200,6 +200,24 @@ esp_err_t user_component_init(void)
         ESP_LOGI(TAG, "OV2640 camera ready (LAN web preview only)");
     }
 
+    /* 从 NVS 恢复红外补光灯光强与摄像头曝光等级 */
+    if (cam_err == ESP_OK) {
+        nvs_handle_t nvs;
+        if (nvs_open("cam_config", NVS_READONLY, &nvs) == ESP_OK) {
+            uint8_t ir_duty = 0;
+            if (nvs_get_u8(nvs, "ir_duty", &ir_duty) == ESP_OK && ir_duty > 0) {
+                ir_light_set_duty_percent(ir_duty);
+                ESP_LOGI(TAG, "IR light duty restored to %d%%", ir_duty);
+            }
+            int8_t ae_level = 0;
+            if (nvs_get_i8(nvs, "ae_level", &ae_level) == ESP_OK) {
+                ov2640_camera_set_ae_level(ae_level);
+                ESP_LOGI(TAG, "Camera AE level restored to %d", ae_level);
+            }
+            nvs_close(nvs);
+        }
+    }
+
     create_ui();
 
     /* 从 NVS 加载投喂计划配置 */

@@ -38,6 +38,9 @@ extern "C" {
 /* OV2640 JPEG quality: 数值越小画质越高，合法范围为 1..63。 */
 #define CAM_JPEG_QUALITY       10
 
+/* OV2640 自动曝光等级：-2 ~ +2，越小画面越暗；-1 比默认 0 暗一级。 */
+#define CAM_AE_LEVEL           (-1)
+
 /*
  * The ESP32-S3 DVP JPEG path can report zero for larger OV2640 JPEG frames.
  * Capture the DVP byte stream as a raw buffer and find the JPEG EOI marker in
@@ -105,6 +108,24 @@ esp_err_t ov2640_camera_copy_jpeg_frame(uint8_t *dst, size_t capacity,
  * @return true 就绪
  */
 bool ov2640_camera_is_ready(void);
+
+/**
+ * @brief 设置 OV2640 自动曝光（AE）等级
+ *
+ * 取值范围 -2 ~ +2，越小画面越暗，默认 CAM_AE_LEVEL。
+ * 若传感器已就绪则立即写入寄存器，否则保存待初始化时应用。
+ *
+ * @param level 曝光等级
+ * @return esp_err_t 成功返回 ESP_OK
+ */
+esp_err_t ov2640_camera_set_ae_level(int8_t level);
+
+/**
+ * @brief 获取当前保存的曝光等级
+ *
+ * @return int8_t 曝光等级（-2 ~ +2）
+ */
+int8_t ov2640_camera_get_ae_level(void);
 
 #ifdef __cplusplus
 }

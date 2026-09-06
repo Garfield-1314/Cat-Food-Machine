@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.2] - 2026-09-06
+
+### Added
+
+- **Manual IR illuminator brightness control**
+  - The IR light now uses LEDC PWM dimming (400 Hz, 10-bit) instead of a plain GPIO on/off, so its brightness can be set continuously
+  - Default brightness is 60% and can be adjusted from 1% to 75% on the new Settings page slider; the value is saved to NVS and restored at boot
+  - Changing the brightness while the light is already on takes effect immediately
+
+- **Manual camera exposure-level control**
+  - The OV2640 AE level (−2 to +2, lower is darker) can now be adjusted from the Settings page slider; default is −1 to compensate for overexposure under the IR light
+  - The value is applied when the sensor is initialized, written immediately when changed at runtime, saved to NVS, and restored at boot
+
+- **Settings page rework**
+  - Added "IR Light" and "Exposure" sliders next to the existing backlight slider, with per-setting debounced NVS saving (800 ms) and save-on-page-exit
+
 ## [0.2.1] - 2026-09-04
 
 ### Fixed
@@ -211,6 +227,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 项目版本遵循 [语义化版本规范](https://semver.org/spec/v2.0.0.html)。
 
 ---
+
+## [0.2.2] - 2026-09-06
+
+### 新增
+
+- **红外补光灯光强可手动调节**
+  - 补光灯由 GPIO 开关改为 LEDC PWM 调光（400 Hz、10-bit），亮度可连续调节
+  - 默认亮度 60%，可在设置页滑块上从 1% 调到 75%；设置保存到 NVS，重启后恢复
+  - 灯已点亮时修改亮度立即生效
+
+- **摄像头曝光等级可手动调节**
+  - OV2640 自动曝光等级（-2 ~ +2，越小越暗）可在设置页滑块上调节；默认 -1，用于补偿红外补光下的画面过曝
+  - 值在传感器初始化时应用，运行中修改立即写入，保存到 NVS，重启后恢复
+
+- **设置页改版**
+  - 在原背光滑块旁新增 "IR Light" 与 "Exposure" 滑块；各项设置均 800ms 防抖保存到 NVS，退出页面时兜底落盘
 
 ## [0.2.1] - 2026-09-04
 
