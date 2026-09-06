@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.2] - 2026-09-06
+
+### Added
+
+- **IR fill light PWM dimming and automatic brightness control**
+  - The IR fill light (GPIO43/TXD0) is now driven by a dedicated LEDC PWM channel (11-bit, 20 kHz) instead of a plain GPIO toggle, and a `ir_light_set_brightness()` API allows software dimming of the light
+  - A new auto-brightness module starts with the camera stream and reads the OV2640 exposure/gain/average-Y registers on a control loop; when the scene is still dark at maximum exposure it raises the PWM duty, and when the scene is bright enough it lowers it, keeping night-vision images correctly exposed without manual intervention
+  - The auto controller never exceeds a configurable brightness ceiling persisted in NVS (`ir_config`/`max`, default 60 %); the ceiling API and the loop thresholds (deadband, step, saturation) are exposed as tunables pending on-device calibration in a dark room
+
 ## [0.2.1] - 2026-09-04
 
 ### Fixed
