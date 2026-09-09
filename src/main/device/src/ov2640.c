@@ -380,6 +380,59 @@ static void cam_free_frame_buffers(void)
   portEXIT_CRITICAL(&s_frame_mux);
 }
 
+/* ========== OV2640 寄存器 bank 管理 ========== */
+#define OV2640_BANK_SENSOR  0x00
+#define OV2640_BANK_DSP     0x01
+
+static esp_err_t ov2640_select_bank(uint8_t bank)
+{
+  esp_cam_sensor_reg_val_t reg = { .regaddr = 0xFF, .value = bank };
+  return esp_cam_sensor_ioctl(s_sensor, ESP_CAM_SENSOR_IOC_S_REG, &reg);
+}
+
+static esp_err_t ov2640_write_reg(uint8_t addr, uint8_t val)
+{
+  esp_cam_sensor_reg_val_t reg = { .regaddr = addr, .value = val };
+  return esp_cam_sensor_ioctl(s_sensor, ESP_CAM_SENSOR_IOC_S_REG, &reg);
+}
+
+esp_err_t ov2640_camera_apply_custom_ae(void)
+{
+  if (s_sensor == NULL) {
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  /* 切到 DSP bank，写入自定义 AE 阈值 */
+  esp_err_t ret = ov2640_select_bank(OV2640_BANK_DSP);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "select DSP bank failed: %s", esp_err_to_name(ret));
+    return ret;
+  }
+
+  /* AEW (0x24): AE 高阈值 — 亮度超过此值时降低曝光 */
+  ret = ov2640_write_reg(0x24, 0x40);
+  if (ret != ESP_OK) goto write_fail;
+
+  /* AEB (0x25): AE 低阈值 — 亮度低于此值时增加曝光 */
+  ret = ov2640_write_reg(0x25, 0x10);
+  if (ret != ESP_OK) goto write_fail;
+
+  /* VV (0x26): 快速模式阈值 — 0x00 表示禁用快速调整 */
+  ret = ov2640_write_reg(0x26, 0x00);
+  if (ret != ESP_OK) goto write_fail;
+
+  /* 切回 SENSOR bank */
+  ov2640_select_bank(OV2640_BANK_SENSOR);
+
+  ESP_LOGI(TAG, "Custom AE applied: AEW=0x40 AEB=0x10 VV=0x00 (deadband=48)");
+  return ESP_OK;
+
+write_fail:
+  ESP_LOGE(TAG, "write AE reg failed: %s", esp_err_to_name(ret));
+  ov2640_select_bank(OV2640_BANK_SENSOR);
+  return ret;
+}
+
 esp_err_t ov2640_camera_start(void)
 {
   if (!s_ready || s_cam_handle == NULL) {
@@ -428,6 +481,9 @@ esp_err_t ov2640_camera_start(void)
     goto start_failed;
   }
   sensor_stream_started = true;
+
+  /* 传感器已出流，应用自定义 AE 参数（扩大死区，消除暗光 IR 下的闪烁） */
+  ov2640_camera_apply_custom_ae();
 
   ret = esp_cam_ctlr_enable(s_cam_handle);
   if (ret != ESP_OK) {
