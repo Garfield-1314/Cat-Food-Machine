@@ -127,6 +127,19 @@ esp_err_t ov2640_camera_set_ae_level(int8_t level);
  */
 int8_t ov2640_camera_get_ae_level(void);
 
+/**
+ * @brief 应用自定义 AE 参数（扩大死区、降低目标亮度）
+ *
+ * 在暗光 IR 补光环境下，默认 AE 死区过窄会导致曝光在过曝与正常之间
+ * 振荡。此函数通过写入 OV2640 DSP bank 的 AEW/AEB/VV 寄存器，扩大 AE
+ * 死区并降低目标亮度，消除画面闪烁。
+ *
+ * 通常在 ov2640_camera_start() 后自动调用，无需手动调用。
+ *
+ * @return esp_err_t 成功返回 ESP_OK
+ */
+esp_err_t ov2640_camera_apply_custom_ae(void);
+
 #ifdef __cplusplus
 }
 #endif
