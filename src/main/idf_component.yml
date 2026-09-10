@@ -2,6 +2,3 @@ description: cat_food main component
 dependencies:
     lvgl/lvgl: ^8.4.0
     espressif/esp_cam_sensor: "^1.1.0"
-    espressif/esp_mqtt: "^2.0.0"
-    espressif/cJSON: "^1.7.15"
-    espressif/qrcode: "^1.0.0"

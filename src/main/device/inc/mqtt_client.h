@@ -109,6 +109,13 @@ esp_err_t mqtt_client_publish_feed_done(uint8_t amount);
 bool mqtt_client_is_bound(void);
 
 /**
+ * @brief 标记设备已绑定到指定用户并持久化到 NVS
+ * @param user_id 用户 openId
+ * @return ESP_OK 成功
+ */
+esp_err_t mqtt_client_set_bound_user(const char *user_id);
+
+/**
  * @brief 获取设备信息
  * @return 设备信息指针
  */

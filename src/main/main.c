@@ -74,6 +74,12 @@ static void on_cloud_command(const cloud_cmd_t *cmd)
             /* 绑定成功消息 */
             if (cmd->user_id[0] != '\0') {
                 ESP_LOGI(TAG, "Device bound to user: %s", cmd->user_id);
+                /* 持久化绑定状态，重启后仍为已绑定 */
+                esp_err_t bind_err = mqtt_client_set_bound_user(cmd->user_id);
+                if (bind_err != ESP_OK) {
+                    ESP_LOGW(TAG, "Failed to persist binding: %s",
+                             esp_err_to_name(bind_err));
+                }
                 /* 设备绑定成功，需要重启 MQTT 连接 */
                 mqtt_client_stop();
                 mqtt_client_start(MQTT_BROKER_URI,

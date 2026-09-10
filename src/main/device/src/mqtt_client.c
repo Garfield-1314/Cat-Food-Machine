@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include "esp_log.h"
 #include "esp_event.h"
+#include "esp_mac.h"
+#include "esp_random.h"
 #include "mqtt_client.h"
 #include "nvs_flash.h"
 #include "cJSON.h"
@@ -337,6 +339,19 @@ esp_err_t mqtt_client_publish_feed_done(uint8_t amount)
 bool mqtt_client_is_bound(void)
 {
     return s_device_info.bound;
+}
+
+esp_err_t mqtt_client_set_bound_user(const char *user_id)
+{
+    if (user_id == NULL || user_id[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    strncpy(s_device_info.user_id, user_id, sizeof(s_device_info.user_id) - 1);
+    s_device_info.user_id[sizeof(s_device_info.user_id) - 1] = '\0';
+    s_device_info.bound = true;
+
+    return save_device_info();
 }
 
 const device_info_t *mqtt_client_get_device_info(void)
