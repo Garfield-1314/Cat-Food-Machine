@@ -8,6 +8,9 @@ static volatile bool s_feeding_active = false;
 static volatile bool s_feeding_done = false;
 static uint8_t s_feeding_amount = 0;
 
+/* ========== MQTT 配置 ========== */
+#define MQTT_BROKER_URI "mqtt://broker.emqx.io"  /* TODO: 替换为实际的 MQTT 服务器地址 */
+
 /* ========== 背光自动熄灭 ========== */
 #define IDLE_TIMEOUT_MS  300000   /* 5 分钟无操作熄灭背光 */
 static bool s_backlight_dimmed = false;
@@ -16,6 +19,81 @@ static uint8_t s_backlight_restore_brightness = 100;
 
 /* 非 LVGL 上下文（调度器任务）请求恢复背光，由 LVGL 定时器消费 */
 static volatile bool s_backlight_restore_pending = false;
+
+/* 云端命令回调 */
+static void on_cloud_command(const cloud_cmd_t *cmd)
+{
+    if (!cmd) return;
+
+    switch (cmd->type) {
+        case CLOUD_CMD_FEED:
+            ESP_LOGI(TAG, "Cloud command: feed %d slots", cmd->params.feed.slots);
+            manual_feeding_start(cmd->params.feed.slots);
+            break;
+
+        case CLOUD_CMD_ADD_SCHEDULE: {
+            ESP_LOGI(TAG, "Cloud command: add schedule %02d:%02d",
+                    cmd->params.schedule.hour, cmd->params.schedule.minute);
+            feed_schedule_item_t item = {
+                .hour = cmd->params.schedule.hour,
+                .minute = cmd->params.schedule.minute,
+                .amount = cmd->params.schedule.amount,
+                .enabled = cmd->params.schedule.enabled,
+                .every_days = cmd->params.schedule.every_days
+            };
+            feed_schedule_add_item(&item);
+            feed_schedule_save();
+            break;
+        }
+
+        case CLOUD_CMD_UPDATE_SCHEDULE:
+            ESP_LOGI(TAG, "Cloud command: update schedule[%d]", cmd->params.schedule.index);
+            feed_schedule_item_t item = {
+                .hour = cmd->params.schedule.hour,
+                .minute = cmd->params.schedule.minute,
+                .amount = cmd->params.schedule.amount,
+                .enabled = cmd->params.schedule.enabled,
+                .every_days = cmd->params.schedule.every_days
+            };
+            feed_schedule_set_item(cmd->params.schedule.index, &item);
+            feed_schedule_save();
+            break;
+
+        case CLOUD_CMD_DELETE_SCHEDULE:
+            ESP_LOGI(TAG, "Cloud command: delete schedule[%d]", cmd->params.schedule.index);
+            feed_schedule_remove_item(cmd->params.schedule.index);
+            feed_schedule_save();
+            break;
+
+        case CLOUD_CMD_GET_STATUS:
+            ESP_LOGI(TAG, "Cloud command: get status");
+            mqtt_client_publish_status("online", mqtt_client_is_bound());
+            break;
+
+        case CLOUD_CMD_UNKNOWN:
+            /* 绑定成功消息 */
+            if (cmd->user_id[0] != '\0') {
+                ESP_LOGI(TAG, "Device bound to user: %s", cmd->user_id);
+                /* 设备绑定成功，需要重启 MQTT 连接 */
+                mqtt_client_stop();
+                mqtt_client_start(MQTT_BROKER_URI,
+                                mqtt_client_get_device_info()->device_id,
+                                cmd->user_id, NULL);
+            }
+            break;
+
+        default:
+            ESP_LOGW(TAG, "Unknown cloud command: %d", cmd->type);
+            break;
+    }
+}
+
+/* MQTT 消息回调 */
+static void on_mqtt_message(const char *topic, const char *payload, int payload_len)
+{
+    ESP_LOGI(TAG, "MQTT message received: topic=%s", topic);
+    cloud_api_handle_mqtt_message(topic, payload, payload_len);
+}
 
 /* WiFi 连接成功后的回调 */
 static void on_wifi_connected(void)
@@ -28,6 +106,16 @@ static void on_wifi_connected(void)
     if (stream_err != ESP_OK) {
         ESP_LOGW(TAG, "Failed to start video stream server: %s",
                  esp_err_to_name(stream_err));
+    }
+
+    /* 启动 MQTT 客户端 */
+    const device_info_t *dev_info = mqtt_client_get_device_info();
+    esp_err_t mqtt_err = mqtt_client_start(MQTT_BROKER_URI,
+                                           dev_info->device_id,
+                                           dev_info->user_id,
+                                           dev_info->temp_token);
+    if (mqtt_err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to start MQTT client: %s", esp_err_to_name(mqtt_err));
     }
 }
 
@@ -163,6 +251,9 @@ static void feeding_popup_timer_cb(lv_timer_t *timer)
         s_feeding_active = false;
         s_feeding_done = false;
         ESP_LOGI(TAG, "Feeding popup closed");
+
+        /* 上报喂食完成事件到云端 */
+        mqtt_client_publish_feed_done(s_feeding_amount);
     }
 }
 
@@ -249,6 +340,24 @@ esp_err_t user_component_init(void)
 
     /* 创建 LVGL 定时器用于管理投喂弹窗（每 200ms 检查一次） */
     lv_timer_create(feeding_popup_timer_cb, 200, NULL);
+
+    /* 初始化 MQTT 客户端 */
+    esp_err_t mqtt_init_err = mqtt_client_init();
+    if (mqtt_init_err != ESP_OK) {
+        ESP_LOGW(TAG, "MQTT client init failed: %s", esp_err_to_name(mqtt_init_err));
+    }
+
+    /* 初始化云端 API */
+    esp_err_t cloud_init_err = cloud_api_init();
+    if (cloud_init_err != ESP_OK) {
+        ESP_LOGW(TAG, "Cloud API init failed: %s", esp_err_to_name(cloud_init_err));
+    }
+
+    /* 注册云端命令回调 */
+    cloud_api_register_cmd_cb(on_cloud_command);
+
+    /* 注册 MQTT 消息回调 */
+    mqtt_client_register_message_cb(on_mqtt_message);
 
     /* 初始化 WiFi (自动尝试连接上一次保存的网络) */
     wifi_app_init();
