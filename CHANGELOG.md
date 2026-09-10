@@ -13,8 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Cloud binding, unbinding, and schedule synchronization (MQTT)**
   - Binding results are now verified against the device's temporary token; a mismatch is rejected with a warning
-  - New `unbind` command clears the persisted binding, stops remote capture, and reconnects the device in unbound mode
+  - New `unbind` command clears the persisted binding, stops remote capture, and switches the device back to the unbound bind-result subscription
   - The device is the source of truth for feeding schedules: it publishes its list as a retained `device/<id>/schedules` message after MQTT connect and after local edits, applies full-list `sync_schedules` commands, and republishes on `get_schedules`
+
+- **On-screen binding QR code**
+  - Tapping the camera icon on the home page opens a popup with a QR code containing `{"d":"<device_id>","t":"<temp_token>","ts":<unix>}` plus the device ID; the popup closes on tap or after 20 seconds
+  - The QR code is rendered with the LVGL built-in `lv_qrcode` widget (`CONFIG_LV_USE_QRCODE=y`)
 
 - **Remote snapshot capture**
   - New `start_capture`/`stop_capture` commands capture a JPEG every 5 s and publish it base64-encoded as a retained `device/<id>/image` message; stopping clears the retained image
@@ -25,11 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Binding/unbinding could deadlock the MQTT client**
+  - The bind and unbind flows used to call `esp_mqtt_client_stop()` / `esp_mqtt_client_destroy()` from inside the MQTT event handler, which ESP-IDF does not allow; the device now switches subscriptions on the live connection (unsubscribe `device/<id>/bind_result`, subscribe `user/<uid>/device/<id>/command`, or the reverse) and republishes its status, with no client restart
+  - MQTT is also started from the WiFi-already-connected fallback path at boot (previously only SNTP and the HTTP server were started there)
+
 - **Schedule update/delete could target the wrong item**
   - The cloud addressed schedules by their sorted database index while the device used its NVS insertion order; the protocol now uses full-list synchronization, so the two sides cannot diverge
 
 - **Binding state was not persisted after a successful bind**
-  - `mqtt_client_set_bound_user()` now writes the user ID and bound flag to NVS, and the bind flow persists before reconnecting, so the binding survives a reboot
+  - `mqtt_client_set_bound_user()` now writes the user ID and bound flag to NVS, so the binding survives a reboot
 
 ### Changed
 
@@ -262,8 +270,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **MQTT 绑定、解绑与定时任务同步**
   - 绑定结果新增 token 校验，token 不匹配将拒绝绑定并告警
-  - 新增 `unbind` 指令：清除已持久化的绑定、停止远程截图，并以未绑定模式重连
+  - 新增 `unbind` 指令：清除已持久化的绑定、停止远程截图，并切换回未绑定状态的绑定结果订阅
   - 定时任务以设备为准：设备在 MQTT 连接后和本地修改后，以 retained 消息上报 `device/<id>/schedules`；收到 `sync_schedules` 时全量替换并回读确认；收到 `get_schedules` 时重新上报
+
+- **屏幕绑定二维码**
+  - 点击主页摄像头图标弹出二维码，内容为 `{"d":"<设备ID>","t":"<临时Token>","ts":<unix>}`，并显示设备 ID；点击或 20 秒后自动关闭
+  - 二维码使用 LVGL 内置 `lv_qrcode` 组件渲染（`CONFIG_LV_USE_QRCODE=y`）
 
 - **远程截图**
   - 新增 `start_capture`/`stop_capture` 指令，每 5 秒抓取一帧 JPEG 并以 base64 retained 发布到 `device/<id>/image`；停止时清除 retained 图片
@@ -274,11 +286,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 修复
 
+- **绑定/解绑可能导致 MQTT 客户端死锁**
+  - 绑定与解绑流程原先在 MQTT 事件回调中调用 `esp_mqtt_client_stop()` / `esp_mqtt_client_destroy()`，ESP-IDF 不允许这样做；现在改为在现有连接上切换订阅（退订 `device/<id>/bind_result`、订阅 `user/<uid>/device/<id>/command`，或反向操作）并补发状态，不再重启客户端
+  - 开机时若 WiFi 在回调注册前已连接，兜底分支现在也会启动 MQTT（此前只启动 SNTP 和 HTTP 服务）
+
 - **定时任务改/删可能操作错误条目**
   - 云端按数据库排序下标定位，设备按 NVS 插入顺序定位，两边不一致；现改为全量同步，避免两端分叉
 
 - **绑定成功后未持久化绑定状态**
-  - `mqtt_client_set_bound_user()` 现在会把用户 ID 和绑定标志写入 NVS，绑定流程先持久化再重连，重启后仍保持绑定
+  - `mqtt_client_set_bound_user()` 现在会把用户 ID 和绑定标志写入 NVS，重启后仍保持绑定
 
 ### 变更
 

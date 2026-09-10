@@ -13,6 +13,9 @@ An ESP32-S3 based **intelligent cat feeder** with touchscreen UI, WiFi connectiv
 - **Stepper Motor Dispensing** — A4988 driven stepper motor, 6-bin hopper, 1 slot = 60° rotation
 - **OV2640 Camera** — OV2640 DVP 8-bit parallel interface, native 640×480 JPEG captured on demand
 - **WiFi Connectivity** — Station mode with one saved credential set, on-screen WiFi configuration and device IP display
+- **Cloud Connectivity (MQTT)** — MQTT client with a MAC-based device ID and a random temporary token; binds to a WeChat account by scanning the on-screen QR code, receives `feed` / schedule / capture commands on `user/<openid>/device/<id>/command`, and reports retained status (`online`/`offline`, `ip`, `ts`), schedule lists, and snapshot images
+- **QR Binding** — Tapping the home-page camera icon shows a QR code containing `{"d":"<device_id>","t":"<temp_token>","ts":<unix>}`, rendered with LVGL's built-in `lv_qrcode` widget; the popup closes on tap or after 20 seconds
+- **Remote Snapshot Upload** — `start_capture` / `stop_capture` commands publish a base64 JPEG to the retained `device/<id>/image` topic every 5 seconds; stopping clears the retained image
 - **On-demand LAN Video Streaming** — HTTP-MJPEG stream at `http://<device-ip>/stream`, with a self-reconnecting browser page at `http://<device-ip>/`
 - **SNTP Time Sync** — Automatic time synchronization via NTP (Beijing time, UTC+8)
 - **Auto Backlight Dimming** — Automatically dims backlight after 5 minutes of inactivity
@@ -36,6 +39,8 @@ Cat-Food-Machine/
 │   │   │   ├── inc/         #   - st7789.h, gt911.h, user_lvgl.h
 │   │   │   │                #   - ov2640.h, video_stream.h, ir_light.h
 │   │   │   │                #   - wifi_app.h, sntp_time.h
+│   │   │   │                #   - mqtt_client.h, cloud_api.h
+│   │   │   │                #   - cloud_upload.h, qrcode_gen.h
 │   │   │   └── src/         # Driver implementations
 │   │   ├── driver/          # Application-specific drivers
 │   │   │   ├── inc/         #   - feeder_motor.h, feeding_schedule.h
@@ -43,6 +48,7 @@ Cat-Food-Machine/
 │   │   └── ui/              # LVGL user interface
 │   │       ├── inc/         #   - ui.h, app_page.h, feeding_page.h
 │   │       │                #   - setting_page.h, wifi_config_page.h
+│   │       │                #   - qr_popup.h
 │   │       └── src/         # UI implementations
 ├── README.md                # English documentation
 ├── README_zh.md             # Chinese documentation
@@ -53,9 +59,12 @@ Cat-Food-Machine/
 
 The firmware is one ESP-IDF application component. Initialization is performed
 in this order: NVS flash, ST7789/LVGL and GT911, A4988 motor, OV2640 sensor,
-home UI, feeding schedule, backlight, and WiFi. After WiFi obtains an IPv4
-address, SNTP is started and the HTTP server is created. The main task then
-returns and the dedicated LVGL task runs the UI loop at 50 Hz.
+home UI, feeding schedule, backlight, MQTT/cloud API, and WiFi. After WiFi
+obtains an IPv4 address, SNTP, the HTTP server, and the MQTT client are started.
+When the MQTT connection is up, the device subscribes to its bind-result topic
+(while unbound) or the bound user's command topic, publishes its retained
+status, and reports the current schedule list. The main task then returns and
+the dedicated LVGL task runs the UI loop at 50 Hz.
 
 - The feeding scheduler checks enabled schedules once per second. It waits for
   a valid synchronized clock before triggering the motor.
@@ -288,8 +297,9 @@ to 32 first.
   firmware version, WiFi MAC address, and a 30–100% backlight slider.
 - The backlight is automatically turned off after 5 minutes without touch input;
   touch activity or an active feed wakes it again.
-- Tapping the camera icon on the home page shows the web stream URL
-  (`http://<device-ip>/`) — open it in a browser to watch the live feed.
+- Tapping the camera icon on the home page shows the binding QR code (device
+  ID + temporary token) and the device ID; the popup closes on tap or after
+  20 seconds. Open `http://<device-ip>/` in a browser to watch the live feed.
 
 ## 📖 API Overview
 
