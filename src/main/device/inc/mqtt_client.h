@@ -20,6 +20,9 @@ typedef enum {
 /* MQTT 消息回调 */
 typedef void (*mqtt_message_cb_t)(const char *topic, const char *payload, int payload_len);
 
+/* MQTT 连接成功回调 */
+typedef void (*mqtt_connected_cb_t)(void);
+
 /* 设备信息结构体 */
 typedef struct {
     char device_id[17];      /* 设备ID (MAC地址) */
@@ -61,6 +64,17 @@ esp_err_t mqtt_client_stop(void);
 esp_err_t mqtt_client_publish(const char *topic, const char *payload, int qos);
 
 /**
+ * @brief 发布消息（可指定 retain）
+ * @param topic 主题
+ * @param payload 消息内容
+ * @param qos QoS 等级 (0, 1, 2)
+ * @param retain 是否保留消息
+ * @return ESP_OK 成功
+ */
+esp_err_t mqtt_client_publish_ex(const char *topic, const char *payload,
+                                 int qos, bool retain);
+
+/**
  * @brief 订阅主题
  * @param topic 主题
  * @param qos QoS 等级
@@ -86,6 +100,12 @@ mqtt_state_t mqtt_client_get_state(void);
  * @param cb 回调函数
  */
 void mqtt_client_register_message_cb(mqtt_message_cb_t cb);
+
+/**
+ * @brief 注册 MQTT 连接成功回调
+ * @param cb 回调函数
+ */
+void mqtt_client_register_connected_cb(mqtt_connected_cb_t cb);
 
 /**
  * @brief 发布设备状态
@@ -114,6 +134,12 @@ bool mqtt_client_is_bound(void);
  * @return ESP_OK 成功
  */
 esp_err_t mqtt_client_set_bound_user(const char *user_id);
+
+/**
+ * @brief 清除绑定状态（解绑）并持久化到 NVS
+ * @return ESP_OK 成功
+ */
+esp_err_t mqtt_client_clear_binding(void);
 
 /**
  * @brief 获取设备信息

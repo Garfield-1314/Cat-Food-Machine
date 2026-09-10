@@ -331,6 +331,28 @@ esp_err_t feed_schedule_add_item(const feed_schedule_item_t *item)
     return ESP_OK;
 }
 
+esp_err_t feed_schedule_replace_all(const feed_schedule_item_t *items, int count)
+{
+    if ((items == NULL && count > 0) || count < 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (count > MAX_SCHEDULE_ITEMS) {
+        count = MAX_SCHEDULE_ITEMS;
+    }
+
+    lock();
+    for (int i = 0; i < count; i++) {
+        memcpy(&s_items[i], &items[i], sizeof(feed_schedule_item_t));
+        sanitize_item(&s_items[i]);
+        s_last_triggered[i] = 0;
+    }
+    s_count = count;
+    unlock();
+
+    ESP_LOGI(TAG, "Replaced schedule list (%d items)", count);
+    return ESP_OK;
+}
+
 esp_err_t feed_schedule_remove_item(int index)
 {
     lock();

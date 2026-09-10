@@ -2,21 +2,33 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 #include "esp_log.h"
 #include "esp_event.h"
+#include "esp_timer.h"
 #include "esp_mac.h"
 #include "esp_random.h"
 #include "mqtt_client.h"
 #include "nvs_flash.h"
 #include "cJSON.h"
+#include "device/inc/wifi_app.h"
 
 static const char *TAG = "mqtt_client";
+
+/* 心跳间隔：周期刷新 retained 在线状态，供云端判断在线 */
+#define MQTT_HEARTBEAT_INTERVAL_US (60LL * 1000 * 1000)
 
 /* MQTT 客户端句柄 */
 static esp_mqtt_client_handle_t s_client = NULL;
 static mqtt_state_t s_state = MQTT_STATE_DISCONNECTED;
 static mqtt_message_cb_t s_message_cb = NULL;
+static mqtt_connected_cb_t s_connected_cb = NULL;
 static device_info_t s_device_info = {0};
+static esp_timer_handle_t s_heartbeat_timer = NULL;
+
+/* LWT（遗嘱）主题与载荷，需在客户端生命周期内保持有效 */
+static char s_lwt_topic[128] = {0};
+static char s_lwt_payload[160] = {0};
 
 /* MQTT 服务器地址 */
 static char s_broker_uri[128] = {0};
@@ -101,6 +113,15 @@ static void generate_temp_token(void)
     s_device_info.temp_token[32] = '\0';
 }
 
+/* 心跳定时器回调：刷新 retained 在线状态（esp_timer 任务上下文，publish 线程安全） */
+static void mqtt_heartbeat_cb(void *arg)
+{
+    (void)arg;
+    if (s_state == MQTT_STATE_CONNECTED) {
+        mqtt_client_publish_status("online", s_device_info.bound);
+    }
+}
+
 /* MQTT 事件处理 */
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
                               int32_t event_id, void *event_data)
@@ -129,6 +150,11 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
 
             /* 发布在线状态 */
             mqtt_client_publish_status("online", s_device_info.bound);
+
+            /* 通知上层（例如上报定时任务列表） */
+            if (s_connected_cb) {
+                s_connected_cb();
+            }
             break;
 
         case MQTT_EVENT_DISCONNECTED:
@@ -172,6 +198,19 @@ esp_err_t mqtt_client_init(void)
         save_device_info();
     }
 
+    /* 启动在线状态心跳（周期刷新 retained 状态） */
+    if (s_heartbeat_timer == NULL) {
+        const esp_timer_create_args_t timer_args = {
+            .callback = mqtt_heartbeat_cb,
+            .name = "mqtt_heartbeat",
+        };
+        if (esp_timer_create(&timer_args, &s_heartbeat_timer) == ESP_OK) {
+            esp_timer_start_periodic(s_heartbeat_timer, MQTT_HEARTBEAT_INTERVAL_US);
+        } else {
+            ESP_LOGW(TAG, "Failed to create heartbeat timer");
+        }
+    }
+
     return ESP_OK;
 }
 
@@ -189,10 +228,22 @@ esp_err_t mqtt_client_start(const char *broker_uri, const char *device_id,
     if (user_id) strncpy(s_device_info.user_id, user_id, sizeof(s_device_info.user_id) - 1);
     if (temp_token) strncpy(s_device_info.temp_token, temp_token, sizeof(s_device_info.temp_token) - 1);
 
+    /* 配置 LWT：异常掉线时由 broker 发布离线状态（retained） */
+    snprintf(s_lwt_topic, sizeof(s_lwt_topic), TOPIC_STATUS_FMT,
+             s_device_info.device_id);
+    snprintf(s_lwt_payload, sizeof(s_lwt_payload),
+             "{\"status\":\"offline\",\"bound\":%s,\"deviceId\":\"%s\"}",
+             s_device_info.bound ? "true" : "false", s_device_info.device_id);
+
     /* 配置 MQTT 客户端 */
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = s_broker_uri,
         .credentials.client_id = s_device_info.device_id,
+        .session.last_will.topic = s_lwt_topic,
+        .session.last_will.msg = s_lwt_payload,
+        .session.last_will.msg_len = 0,
+        .session.last_will.qos = 1,
+        .session.last_will.retain = true,
     };
 
     /* 设置认证信息 */
@@ -245,18 +296,26 @@ esp_err_t mqtt_client_stop(void)
 
 esp_err_t mqtt_client_publish(const char *topic, const char *payload, int qos)
 {
+    return mqtt_client_publish_ex(topic, payload, qos, false);
+}
+
+esp_err_t mqtt_client_publish_ex(const char *topic, const char *payload,
+                                 int qos, bool retain)
+{
     if (s_client == NULL || s_state != MQTT_STATE_CONNECTED) {
         ESP_LOGW(TAG, "MQTT not connected");
         return ESP_ERR_INVALID_STATE;
     }
 
-    int msg_id = esp_mqtt_client_publish(s_client, topic, payload, 0, qos, 0);
+    int msg_id = esp_mqtt_client_publish(s_client, topic, payload, 0, qos,
+                                         retain ? 1 : 0);
     if (msg_id < 0) {
         ESP_LOGE(TAG, "Failed to publish to %s", topic);
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "Published to %s: %s", topic, payload);
+    ESP_LOGI(TAG, "Published to %s (%d bytes)", topic,
+             payload != NULL ? (int)strlen(payload) : 0);
     return ESP_OK;
 }
 
@@ -296,15 +355,27 @@ void mqtt_client_register_message_cb(mqtt_message_cb_t cb)
     s_message_cb = cb;
 }
 
+void mqtt_client_register_connected_cb(mqtt_connected_cb_t cb)
+{
+    s_connected_cb = cb;
+}
+
 esp_err_t mqtt_client_publish_status(const char *status, bool bound)
 {
     char topic[128];
     snprintf(topic, sizeof(topic), TOPIC_STATUS_FMT, s_device_info.device_id);
 
+    const char *ip = wifi_app_get_ip();
+    if (ip == NULL) {
+        ip = "";
+    }
+
     cJSON *json = cJSON_CreateObject();
     cJSON_AddStringToObject(json, "status", status);
     cJSON_AddBoolToObject(json, "bound", bound);
     cJSON_AddStringToObject(json, "deviceId", s_device_info.device_id);
+    cJSON_AddStringToObject(json, "ip", ip);
+    cJSON_AddNumberToObject(json, "ts", (double)time(NULL));
 
     if (bound) {
         cJSON_AddStringToObject(json, "userId", s_device_info.user_id);
@@ -313,7 +384,8 @@ esp_err_t mqtt_client_publish_status(const char *status, bool bound)
     char *payload = cJSON_PrintUnformatted(json);
     cJSON_Delete(json);
 
-    esp_err_t err = mqtt_client_publish(topic, payload, 1);
+    /* retained：云端可随时订阅到最新在线状态 */
+    esp_err_t err = mqtt_client_publish_ex(topic, payload, 1, true);
     free(payload);
     return err;
 }
@@ -351,6 +423,13 @@ esp_err_t mqtt_client_set_bound_user(const char *user_id)
     s_device_info.user_id[sizeof(s_device_info.user_id) - 1] = '\0';
     s_device_info.bound = true;
 
+    return save_device_info();
+}
+
+esp_err_t mqtt_client_clear_binding(void)
+{
+    s_device_info.user_id[0] = '\0';
+    s_device_info.bound = false;
     return save_device_info();
 }
 

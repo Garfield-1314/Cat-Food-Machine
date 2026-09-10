@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Cloud binding, unbinding, and schedule synchronization (MQTT)**
+  - Binding results are now verified against the device's temporary token; a mismatch is rejected with a warning
+  - New `unbind` command clears the persisted binding, stops remote capture, and reconnects the device in unbound mode
+  - The device is the source of truth for feeding schedules: it publishes its list as a retained `device/<id>/schedules` message after MQTT connect and after local edits, applies full-list `sync_schedules` commands, and republishes on `get_schedules`
+
+- **Remote snapshot capture**
+  - New `start_capture`/`stop_capture` commands capture a JPEG every 5 s and publish it base64-encoded as a retained `device/<id>/image` message; stopping clears the retained image
+
+- **Online status and liveness**
+  - Status messages now include `ip` and `ts`, and are published as retained messages so the cloud can read the latest state at any time
+  - MQTT Last Will plus a 60 s heartbeat keep the retained online/offline state accurate, including after power loss
+
+### Fixed
+
+- **Schedule update/delete could target the wrong item**
+  - The cloud addressed schedules by their sorted database index while the device used its NVS insertion order; the protocol now uses full-list synchronization, so the two sides cannot diverge
+
+- **Binding state was not persisted after a successful bind**
+  - `mqtt_client_set_bound_user()` now writes the user ID and bound flag to NVS, and the bind flow persists before reconnecting, so the binding survives a reboot
+
+### Changed
+
+- Removed unused managed dependencies (`espressif/esp_mqtt`, `espressif/cJSON`, `espressif/qrcode`); the IDF built-in `mqtt` and `json` components are used instead
+
 ## [0.2.2] - 2026-09-06
 
 ### Added
@@ -227,6 +255,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 项目版本遵循 [语义化版本规范](https://semver.org/spec/v2.0.0.html)。
 
 ---
+
+## [未发布]
+
+### 新增
+
+- **MQTT 绑定、解绑与定时任务同步**
+  - 绑定结果新增 token 校验，token 不匹配将拒绝绑定并告警
+  - 新增 `unbind` 指令：清除已持久化的绑定、停止远程截图，并以未绑定模式重连
+  - 定时任务以设备为准：设备在 MQTT 连接后和本地修改后，以 retained 消息上报 `device/<id>/schedules`；收到 `sync_schedules` 时全量替换并回读确认；收到 `get_schedules` 时重新上报
+
+- **远程截图**
+  - 新增 `start_capture`/`stop_capture` 指令，每 5 秒抓取一帧 JPEG 并以 base64 retained 发布到 `device/<id>/image`；停止时清除 retained 图片
+
+- **在线状态与保活**
+  - 状态消息新增 `ip` 与 `ts`，并改为 retained 发布，云端可随时读取最新状态
+  - 配置 MQTT 遗嘱（LWT）并增加 60 秒心跳，掉电/断网后在线状态仍准确
+
+### 修复
+
+- **定时任务改/删可能操作错误条目**
+  - 云端按数据库排序下标定位，设备按 NVS 插入顺序定位，两边不一致；现改为全量同步，避免两端分叉
+
+- **绑定成功后未持久化绑定状态**
+  - `mqtt_client_set_bound_user()` 现在会把用户 ID 和绑定标志写入 NVS，绑定流程先持久化再重连，重启后仍保持绑定
+
+### 变更
+
+- 移除未使用的组件依赖（`espressif/esp_mqtt`、`espressif/cJSON`、`espressif/qrcode`），改用 IDF 内置的 `mqtt` 与 `json`
 
 ## [0.2.2] - 2026-09-06
 

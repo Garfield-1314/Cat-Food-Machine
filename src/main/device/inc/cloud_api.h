@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "esp_err.h"
+#include "driver/inc/feeding_schedule.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -16,6 +17,11 @@ typedef enum {
     CLOUD_CMD_UPDATE_SCHEDULE,   /* 更新定时任务 */
     CLOUD_CMD_DELETE_SCHEDULE,   /* 删除定时任务 */
     CLOUD_CMD_GET_STATUS,        /* 获取状态 */
+    CLOUD_CMD_UNBIND,            /* 解绑设备 */
+    CLOUD_CMD_SYNC_SCHEDULES,    /* 全量同步定时任务 */
+    CLOUD_CMD_GET_SCHEDULES,     /* 上报定时任务列表 */
+    CLOUD_CMD_START_CAPTURE,     /* 开始远程截图 */
+    CLOUD_CMD_STOP_CAPTURE,      /* 停止远程截图 */
     CLOUD_CMD_UNKNOWN
 } cloud_cmd_type_t;
 
@@ -24,6 +30,7 @@ typedef struct {
     cloud_cmd_type_t type;
     char device_id[17];
     char user_id[65];
+    char token[33];
     union {
         struct {
             uint8_t slots;       /* 喂食仓位数 */
@@ -36,6 +43,10 @@ typedef struct {
             bool enabled;
             uint8_t every_days;
         } schedule;
+        struct {
+            feed_schedule_item_t items[MAX_SCHEDULE_ITEMS];
+            int count;
+        } schedules;
     } params;
 } cloud_cmd_t;
 
@@ -67,9 +78,12 @@ void cloud_api_register_cmd_cb(cloud_cmd_cb_t cb);
  * @param payload 消息内容
  * @param user_id 输出用户ID
  * @param user_id_size 缓冲区大小
+ * @param token 输出绑定 token（可为 NULL）
+ * @param token_size token 缓冲区大小
  * @return true 绑定成功, false 绑定失败
  */
-bool cloud_api_parse_bind_result(const char *payload, char *user_id, size_t user_id_size);
+bool cloud_api_parse_bind_result(const char *payload, char *user_id, size_t user_id_size,
+                                 char *token, size_t token_size);
 
 /**
  * @brief 解析云端命令
@@ -78,6 +92,11 @@ bool cloud_api_parse_bind_result(const char *payload, char *user_id, size_t user
  * @return true 解析成功, false 解析失败
  */
 bool cloud_api_parse_command(const char *payload, cloud_cmd_t *cmd);
+
+/**
+ * @brief 以 retained 消息上报当前定时任务列表到 device/<id>/schedules
+ */
+void cloud_api_report_schedules(void);
 
 #ifdef __cplusplus
 }

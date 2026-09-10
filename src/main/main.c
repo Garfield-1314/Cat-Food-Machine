@@ -1,5 +1,8 @@
 #include "include.h"
 
+#include <string.h>
+#include "ui/inc/feeding_page.h"
+
 static const char *TAG = "main";
 
 /* ========== 投喂弹窗 ========== */
@@ -70,9 +73,51 @@ static void on_cloud_command(const cloud_cmd_t *cmd)
             mqtt_client_publish_status("online", mqtt_client_is_bound());
             break;
 
+        case CLOUD_CMD_UNBIND:
+            ESP_LOGI(TAG, "Cloud command: unbind");
+            cloud_upload_stop();
+            mqtt_client_clear_binding();
+            mqtt_client_stop();
+            mqtt_client_start(MQTT_BROKER_URI,
+                            mqtt_client_get_device_info()->device_id,
+                            NULL,
+                            mqtt_client_get_device_info()->temp_token);
+            break;
+
+        case CLOUD_CMD_SYNC_SCHEDULES:
+            ESP_LOGI(TAG, "Cloud command: sync %d schedule(s)",
+                     cmd->params.schedules.count);
+            feed_schedule_replace_all(cmd->params.schedules.items,
+                                      cmd->params.schedules.count);
+            feed_schedule_save();
+            feeding_page_refresh();
+            /* 回读确认：把设备侧最终列表重新上报 */
+            cloud_api_report_schedules();
+            break;
+
+        case CLOUD_CMD_GET_SCHEDULES:
+            ESP_LOGI(TAG, "Cloud command: get schedules");
+            cloud_api_report_schedules();
+            break;
+
+        case CLOUD_CMD_START_CAPTURE:
+            ESP_LOGI(TAG, "Cloud command: start_capture");
+            cloud_upload_start();
+            break;
+
+        case CLOUD_CMD_STOP_CAPTURE:
+            ESP_LOGI(TAG, "Cloud command: stop_capture");
+            cloud_upload_stop();
+            break;
+
         case CLOUD_CMD_UNKNOWN:
             /* 绑定成功消息 */
             if (cmd->user_id[0] != '\0') {
+                const device_info_t *dev = mqtt_client_get_device_info();
+                if (strcmp(cmd->token, dev->temp_token) != 0) {
+                    ESP_LOGW(TAG, "Bind rejected: token mismatch");
+                    break;
+                }
                 ESP_LOGI(TAG, "Device bound to user: %s", cmd->user_id);
                 /* 持久化绑定状态，重启后仍为已绑定 */
                 esp_err_t bind_err = mqtt_client_set_bound_user(cmd->user_id);
@@ -99,6 +144,13 @@ static void on_mqtt_message(const char *topic, const char *payload, int payload_
 {
     ESP_LOGI(TAG, "MQTT message received: topic=%s", topic);
     cloud_api_handle_mqtt_message(topic, payload, payload_len);
+}
+
+/* MQTT 连接成功回调：上报当前定时任务列表（retained） */
+static void on_mqtt_connected(void)
+{
+    ESP_LOGI(TAG, "MQTT connected, reporting schedules");
+    cloud_api_report_schedules();
 }
 
 /* WiFi 连接成功后的回调 */
@@ -364,6 +416,9 @@ esp_err_t user_component_init(void)
 
     /* 注册 MQTT 消息回调 */
     mqtt_client_register_message_cb(on_mqtt_message);
+
+    /* 注册 MQTT 连接成功回调 */
+    mqtt_client_register_connected_cb(on_mqtt_connected);
 
     /* 初始化 WiFi (自动尝试连接上一次保存的网络) */
     wifi_app_init();

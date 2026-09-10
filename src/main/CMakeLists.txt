@@ -14,6 +14,7 @@ SRCS "main.c"
 "device/src/video_stream.c"
 "device/src/mqtt_client.c"
 "device/src/cloud_api.c"
+"device/src/cloud_upload.c"
 "device/src/qrcode_gen.c"
 
 "ui/src/ui.c"
@@ -24,5 +25,5 @@ SRCS "main.c"
 "ui/src/qr_popup.c"
 
                     INCLUDE_DIRS "."
-                    REQUIRES esp_lcd esp_driver_gpio esp_driver_i2c esp_driver_cam esp_http_server nvs_flash esp_timer esp_wifi esp_netif esp_event lwip mqtt json
+                    REQUIRES esp_lcd esp_driver_gpio esp_driver_i2c esp_driver_cam esp_http_server nvs_flash esp_timer esp_wifi esp_netif esp_event lwip mqtt json mbedtls
 )
