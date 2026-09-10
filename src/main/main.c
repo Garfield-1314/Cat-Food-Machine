@@ -76,12 +76,8 @@ static void on_cloud_command(const cloud_cmd_t *cmd)
         case CLOUD_CMD_UNBIND:
             ESP_LOGI(TAG, "Cloud command: unbind");
             cloud_upload_stop();
+            /* 原地退订用户命令主题并恢复绑定结果订阅，不重启 MQTT */
             mqtt_client_clear_binding();
-            mqtt_client_stop();
-            mqtt_client_start(MQTT_BROKER_URI,
-                            mqtt_client_get_device_info()->device_id,
-                            NULL,
-                            mqtt_client_get_device_info()->temp_token);
             break;
 
         case CLOUD_CMD_SYNC_SCHEDULES:
@@ -119,17 +115,12 @@ static void on_cloud_command(const cloud_cmd_t *cmd)
                     break;
                 }
                 ESP_LOGI(TAG, "Device bound to user: %s", cmd->user_id);
-                /* 持久化绑定状态，重启后仍为已绑定 */
+                /* 持久化绑定状态并在现有连接上切换订阅，不重启 MQTT */
                 esp_err_t bind_err = mqtt_client_set_bound_user(cmd->user_id);
                 if (bind_err != ESP_OK) {
                     ESP_LOGW(TAG, "Failed to persist binding: %s",
                              esp_err_to_name(bind_err));
                 }
-                /* 设备绑定成功，需要重启 MQTT 连接 */
-                mqtt_client_stop();
-                mqtt_client_start(MQTT_BROKER_URI,
-                                mqtt_client_get_device_info()->device_id,
-                                cmd->user_id, NULL);
             }
             break;
 
@@ -433,6 +424,16 @@ esp_err_t user_component_init(void)
         if (stream_err != ESP_OK) {
             ESP_LOGW(TAG, "Failed to start video stream server: %s",
                      esp_err_to_name(stream_err));
+        }
+
+        /* WiFi 回调注册前已连上时，这里补启动 MQTT */
+        const device_info_t *dev_info = mqtt_client_get_device_info();
+        esp_err_t mqtt_err = mqtt_client_start(MQTT_BROKER_URI,
+                                               dev_info->device_id,
+                                               dev_info->user_id,
+                                               dev_info->temp_token);
+        if (mqtt_err != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to start MQTT client: %s", esp_err_to_name(mqtt_err));
         }
     }
 

@@ -423,14 +423,52 @@ esp_err_t mqtt_client_set_bound_user(const char *user_id)
     s_device_info.user_id[sizeof(s_device_info.user_id) - 1] = '\0';
     s_device_info.bound = true;
 
-    return save_device_info();
+    esp_err_t err = save_device_info();
+
+    /* 在现有连接上切换订阅，避免在 MQTT 事件回调中 stop/destroy 客户端 */
+    if (s_client != NULL && s_state == MQTT_STATE_CONNECTED) {
+        char topic[128];
+
+        snprintf(topic, sizeof(topic), TOPIC_BIND_RESULT_FMT, s_device_info.device_id);
+        esp_mqtt_client_unsubscribe(s_client, topic);
+
+        snprintf(topic, sizeof(topic), TOPIC_USER_COMMAND_FMT,
+                 s_device_info.user_id, s_device_info.device_id);
+        esp_mqtt_client_subscribe(s_client, topic, 1);
+        ESP_LOGI(TAG, "Subscribed to: %s", topic);
+
+        mqtt_client_publish_status("online", true);
+    }
+
+    return err;
 }
 
 esp_err_t mqtt_client_clear_binding(void)
 {
+    /* 先退订旧用户的命令主题，再清除本地绑定 */
+    if (s_client != NULL && s_state == MQTT_STATE_CONNECTED &&
+        s_device_info.user_id[0] != '\0') {
+        char topic[128];
+        snprintf(topic, sizeof(topic), TOPIC_USER_COMMAND_FMT,
+                 s_device_info.user_id, s_device_info.device_id);
+        esp_mqtt_client_unsubscribe(s_client, topic);
+        ESP_LOGI(TAG, "Unsubscribed from: %s", topic);
+    }
+
     s_device_info.user_id[0] = '\0';
     s_device_info.bound = false;
-    return save_device_info();
+    esp_err_t err = save_device_info();
+
+    /* 回到未绑定状态：重新订阅绑定结果主题 */
+    if (s_client != NULL && s_state == MQTT_STATE_CONNECTED) {
+        char topic[128];
+        snprintf(topic, sizeof(topic), TOPIC_BIND_RESULT_FMT, s_device_info.device_id);
+        esp_mqtt_client_subscribe(s_client, topic, 1);
+        ESP_LOGI(TAG, "Subscribed to bind result: %s", topic);
+        mqtt_client_publish_status("online", false);
+    }
+
+    return err;
 }
 
 const device_info_t *mqtt_client_get_device_info(void)
