@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Application-layer encryption and authentication**
+  - New `secure_msg` module (mbedTLS AES-256-GCM + HMAC-SHA256) matching the cloud `secure.js` envelope; keys are derived from the QR token plus the owner openid, so no secret is ever transmitted
+  - Incoming commands are verified/decrypted, checked against a ±120 s timestamp window and a 16-entry nonce replay cache before execution
+  - Binding now uses an encrypted challenge/response on `device/<id>/bind` / `device/<id>/bind_ack`; bind requests are ignored while already bound
+  - Status, schedules and snapshots are encrypted (unbound devices only publish minimal plaintext status and no schedules)
+  - MQTT topics changed to `device/<id>/cmd` + `device/<id>/bind`; the openid-based command topic and `bind_result` topic were removed
+  - `unbind` clears the binding and rotates the temporary token so old QR codes become invalid
+  - MQTT password is now the temporary token instead of the openid
+
 ### Added
 
 - **Cloud binding, unbinding, and schedule synchronization (MQTT)**

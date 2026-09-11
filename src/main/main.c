@@ -76,8 +76,9 @@ static void on_cloud_command(const cloud_cmd_t *cmd)
         case CLOUD_CMD_UNBIND:
             ESP_LOGI(TAG, "Cloud command: unbind");
             cloud_upload_stop();
-            /* 原地退订用户命令主题并恢复绑定结果订阅，不重启 MQTT */
+            /* 清除本地绑定并轮换 token，旧二维码立即失效 */
             mqtt_client_clear_binding();
+            mqtt_client_regenerate_token();
             break;
 
         case CLOUD_CMD_SYNC_SCHEDULES:
@@ -107,21 +108,7 @@ static void on_cloud_command(const cloud_cmd_t *cmd)
             break;
 
         case CLOUD_CMD_UNKNOWN:
-            /* 绑定成功消息 */
-            if (cmd->user_id[0] != '\0') {
-                const device_info_t *dev = mqtt_client_get_device_info();
-                if (strcmp(cmd->token, dev->temp_token) != 0) {
-                    ESP_LOGW(TAG, "Bind rejected: token mismatch");
-                    break;
-                }
-                ESP_LOGI(TAG, "Device bound to user: %s", cmd->user_id);
-                /* 持久化绑定状态并在现有连接上切换订阅，不重启 MQTT */
-                esp_err_t bind_err = mqtt_client_set_bound_user(cmd->user_id);
-                if (bind_err != ESP_OK) {
-                    ESP_LOGW(TAG, "Failed to persist binding: %s",
-                             esp_err_to_name(bind_err));
-                }
-            }
+            ESP_LOGW(TAG, "Unknown cloud command");
             break;
 
         default:

@@ -7,9 +7,9 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
-#include "mbedtls/base64.h"
 #include "device/inc/mqtt_client.h"
 #include "device/inc/ov2640.h"
+#include "device/inc/secure_msg.h"
 
 static const char *TAG = "cloud_upload";
 
@@ -42,6 +42,14 @@ static void capture_task(void *arg)
     char topic[128];
     snprintf(topic, sizeof(topic), IMAGE_TOPIC_FMT, dev->device_id);
 
+    if (!dev->bound || dev->user_id[0] == '\0') {
+        ESP_LOGW(TAG, "device not bound, capture aborted");
+        s_running = false;
+        s_capture_task = NULL;
+        vTaskDelete(NULL);
+        return;
+    }
+
     if (ov2640_camera_acquire() != ESP_OK) {
         ESP_LOGW(TAG, "camera acquire failed, capture aborted");
         s_running = false;
@@ -52,8 +60,6 @@ static void capture_task(void *arg)
 
     uint8_t *jpeg = alloc_buffer(CAPTURE_INITIAL_JPEG);
     size_t jpeg_cap = jpeg != NULL ? CAPTURE_INITIAL_JPEG : 0;
-    char *b64 = NULL;
-    size_t b64_cap = 0;
 
     while (s_running) {
         size_t jpeg_size = 0;
@@ -84,29 +90,16 @@ static void capture_task(void *arg)
             continue;
         }
 
-        size_t needed = 4 * ((jpeg_size + 2) / 3) + 1;
-        if (needed > b64_cap) {
-            char *new_b64 = (char *)alloc_buffer(needed);
-            if (new_b64 == NULL) {
-                ESP_LOGW(TAG, "base64 buffer alloc failed (%u bytes)",
-                         (unsigned)needed);
-                vTaskDelay(pdMS_TO_TICKS(1000));
-                continue;
-            }
-            heap_caps_free(b64);
-            b64 = new_b64;
-            b64_cap = needed;
-        }
-
-        size_t olen = 0;
-        if (mbedtls_base64_encode((unsigned char *)b64, b64_cap, &olen,
-                                  jpeg, jpeg_size) == 0) {
-            b64[olen] = '\0';
-            mqtt_client_publish_ex(topic, b64, 1, true);
-            ESP_LOGI(TAG, "snapshot published: jpeg=%u base64=%u bytes",
-                     (unsigned)jpeg_size, (unsigned)olen);
+        /* 加密后再发布：公共 broker 上无法读取画面 */
+        char *payload = secure_msg_pack_buffer(dev->temp_token, dev->user_id,
+                                               jpeg, jpeg_size);
+        if (payload != NULL) {
+            mqtt_client_publish_ex(topic, payload, 1, true);
+            ESP_LOGI(TAG, "snapshot published: jpeg=%u payload=%u bytes",
+                     (unsigned)jpeg_size, (unsigned)strlen(payload));
+            free(payload);
         } else {
-            ESP_LOGW(TAG, "base64 encode failed");
+            ESP_LOGW(TAG, "snapshot encrypt failed");
         }
 
         /* 分段延时，便于及时响应 stop */
@@ -119,7 +112,6 @@ static void capture_task(void *arg)
     mqtt_client_publish_ex(topic, "", 1, true);
     ov2640_camera_release();
     heap_caps_free(jpeg);
-    heap_caps_free(b64);
     s_capture_task = NULL;
     ESP_LOGI(TAG, "capture task stopped");
     vTaskDelete(NULL);

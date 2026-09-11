@@ -142,6 +142,12 @@ esp_err_t mqtt_client_set_bound_user(const char *user_id);
 esp_err_t mqtt_client_clear_binding(void);
 
 /**
+ * @brief 轮换临时 token（解绑后调用，使旧二维码失效）
+ * @return ESP_OK 成功
+ */
+esp_err_t mqtt_client_regenerate_token(void);
+
+/**
  * @brief 获取设备信息
  * @return 设备信息指针
  */

@@ -15,6 +15,7 @@ SRCS "main.c"
 "device/src/mqtt_client.c"
 "device/src/cloud_api.c"
 "device/src/cloud_upload.c"
+"device/src/secure_msg.c"
 "device/src/qrcode_gen.c"
 
 "ui/src/ui.c"

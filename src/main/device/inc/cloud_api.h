@@ -74,19 +74,7 @@ void cloud_api_handle_mqtt_message(const char *topic, const char *payload, int p
 void cloud_api_register_cmd_cb(cloud_cmd_cb_t cb);
 
 /**
- * @brief 解析绑定结果
- * @param payload 消息内容
- * @param user_id 输出用户ID
- * @param user_id_size 缓冲区大小
- * @param token 输出绑定 token（可为 NULL）
- * @param token_size token 缓冲区大小
- * @return true 绑定成功, false 绑定失败
- */
-bool cloud_api_parse_bind_result(const char *payload, char *user_id, size_t user_id_size,
-                                 char *token, size_t token_size);
-
-/**
- * @brief 解析云端命令
+ * @brief 解析云端命令（明文 JSON，调用前已完成验签解密）
  * @param payload 消息内容
  * @param cmd 输出命令结构体
  * @return true 解析成功, false 解析失败

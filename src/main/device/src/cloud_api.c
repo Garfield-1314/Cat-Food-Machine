@@ -7,16 +7,17 @@
 #include "esp_log.h"
 #include "cJSON.h"
 #include "device/inc/mqtt_client.h"
+#include "device/inc/secure_msg.h"
 
 static const char *TAG = "cloud_api";
 
 /* 云端命令回调 */
 static cloud_cmd_cb_t s_cmd_cb = NULL;
 
-/* 主题匹配宏 */
-#define TOPIC_BIND_RESULT_PREFIX    "device/"
-#define TOPIC_BIND_RESULT_SUFFIX    "/bind_result"
-#define TOPIC_COMMAND_SUFFIX        "/command"
+#define TOPIC_CMD_FMT        "device/%s/cmd"
+#define TOPIC_BIND_FMT       "device/%s/bind"
+#define TOPIC_BIND_ACK_FMT   "device/%s/bind_ack"
+#define TOPIC_SCHEDULES_FMT  "device/%s/schedules"
 
 esp_err_t cloud_api_init(void)
 {
@@ -27,47 +28,6 @@ esp_err_t cloud_api_init(void)
 void cloud_api_register_cmd_cb(cloud_cmd_cb_t cb)
 {
     s_cmd_cb = cb;
-}
-
-bool cloud_api_parse_bind_result(const char *payload, char *user_id, size_t user_id_size,
-                                 char *token, size_t token_size)
-{
-    if (!payload || !user_id) {
-        return false;
-    }
-
-    cJSON *json = cJSON_Parse(payload);
-    if (!json) {
-        ESP_LOGE(TAG, "Failed to parse bind result JSON");
-        return false;
-    }
-
-    cJSON *success = cJSON_GetObjectItem(json, "success");
-    cJSON *uid = cJSON_GetObjectItem(json, "userId");
-    cJSON *tok = cJSON_GetObjectItem(json, "token");
-
-    bool result = false;
-    if (cJSON_IsBool(success) && cJSON_IsTrue(success) && cJSON_IsString(uid)) {
-        strncpy(user_id, uid->valuestring, user_id_size - 1);
-        user_id[user_id_size - 1] = '\0';
-
-        if (token != NULL && token_size > 0) {
-            if (cJSON_IsString(tok)) {
-                strncpy(token, tok->valuestring, token_size - 1);
-                token[token_size - 1] = '\0';
-            } else {
-                token[0] = '\0';
-            }
-        }
-
-        result = true;
-        ESP_LOGI(TAG, "Bind success, userId: %s", user_id);
-    } else {
-        ESP_LOGW(TAG, "Bind failed or invalid response");
-    }
-
-    cJSON_Delete(json);
-    return result;
 }
 
 bool cloud_api_parse_command(const char *payload, cloud_cmd_t *cmd)
@@ -198,44 +158,135 @@ bool cloud_api_parse_command(const char *payload, cloud_cmd_t *cmd)
     return true;
 }
 
+/* 绑定确认：使用 token 派生密钥加密，retained 供云端拉取；不包含 openid 等敏感信息 */
+static void cloud_api_publish_bind_ack(const char *nonce)
+{
+    const device_info_t *dev = mqtt_client_get_device_info();
+    if (dev == NULL || dev->device_id[0] == '\0') {
+        return;
+    }
+
+    cJSON *obj = cJSON_CreateObject();
+    if (obj == NULL) {
+        return;
+    }
+    cJSON_AddBoolToObject(obj, "ack", true);
+    cJSON_AddStringToObject(obj, "nonce", nonce != NULL ? nonce : "");
+    cJSON_AddNumberToObject(obj, "ts", (double)time(NULL));
+
+    char *payload = secure_msg_pack_json(dev->temp_token, NULL, obj);
+    cJSON_Delete(obj);
+    if (payload == NULL) {
+        ESP_LOGW(TAG, "Failed to pack bind ack");
+        return;
+    }
+
+    char topic[128];
+    snprintf(topic, sizeof(topic), TOPIC_BIND_ACK_FMT, dev->device_id);
+    mqtt_client_publish_ex(topic, payload, 1, true);
+    free(payload);
+}
+
+static void cloud_api_handle_bind(const char *payload)
+{
+    const device_info_t *dev = mqtt_client_get_device_info();
+    if (dev == NULL || dev->bound) {
+        ESP_LOGW(TAG, "Bind ignored (already bound)");
+        return;
+    }
+
+    cJSON *obj = secure_msg_unpack_json(dev->temp_token, NULL, payload);
+    if (obj == NULL) {
+        ESP_LOGW(TAG, "Bind request verify failed");
+        return;
+    }
+
+    if (!secure_msg_accept_message(obj)) {
+        cJSON_Delete(obj);
+        return;
+    }
+
+    cJSON *action = cJSON_GetObjectItem(obj, "action");
+    cJSON *uid = cJSON_GetObjectItem(obj, "userId");
+    cJSON *nonce = cJSON_GetObjectItem(obj, "nonce");
+
+    if (cJSON_IsString(action) && strcmp(action->valuestring, "bind") == 0 &&
+        cJSON_IsString(uid) && uid->valuestring[0] != '\0' &&
+        cJSON_IsString(nonce)) {
+        cloud_api_publish_bind_ack(nonce->valuestring);
+        esp_err_t err = mqtt_client_set_bound_user(uid->valuestring);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to persist binding: %s", esp_err_to_name(err));
+        } else {
+            ESP_LOGI(TAG, "Device bound to user: %s", uid->valuestring);
+            cloud_api_report_schedules();
+        }
+    } else {
+        ESP_LOGW(TAG, "Bind request payload invalid");
+    }
+
+    cJSON_Delete(obj);
+}
+
+static void cloud_api_handle_command(const char *payload)
+{
+    const device_info_t *dev = mqtt_client_get_device_info();
+    if (dev == NULL || !dev->bound || dev->user_id[0] == '\0') {
+        ESP_LOGW(TAG, "Command ignored (not bound)");
+        return;
+    }
+
+    cJSON *obj = secure_msg_unpack_json(dev->temp_token, dev->user_id, payload);
+    if (obj == NULL) {
+        ESP_LOGW(TAG, "Command verify failed");
+        return;
+    }
+
+    if (!secure_msg_accept_message(obj)) {
+        cJSON_Delete(obj);
+        return;
+    }
+
+    char *plain = cJSON_PrintUnformatted(obj);
+    cJSON_Delete(obj);
+    if (plain == NULL) {
+        return;
+    }
+
+    cloud_cmd_t cmd;
+    if (cloud_api_parse_command(plain, &cmd)) {
+        if (s_cmd_cb) {
+            s_cmd_cb(&cmd);
+        }
+    }
+    free(plain);
+}
+
 void cloud_api_handle_mqtt_message(const char *topic, const char *payload, int payload_len)
 {
     if (!topic || !payload) {
         return;
     }
 
-    ESP_LOGI(TAG, "Handling MQTT message: topic=%s", topic);
-
-    /* 检查是否是绑定结果 */
-    if (strstr(topic, TOPIC_BIND_RESULT_PREFIX) && strstr(topic, TOPIC_BIND_RESULT_SUFFIX)) {
-        char user_id[65] = {0};
-        char token[33] = {0};
-        if (cloud_api_parse_bind_result(payload, user_id, sizeof(user_id),
-                                        token, sizeof(token))) {
-            /* 绑定成功，通知上层 */
-            cloud_cmd_t cmd = {
-                .type = CLOUD_CMD_UNKNOWN,
-                .user_id = {0},
-                .token = {0}
-            };
-            strncpy(cmd.user_id, user_id, sizeof(cmd.user_id) - 1);
-            strncpy(cmd.token, token, sizeof(cmd.token) - 1);
-
-            if (s_cmd_cb) {
-                s_cmd_cb(&cmd);
-            }
-        }
+    const device_info_t *dev = mqtt_client_get_device_info();
+    if (dev == NULL || dev->device_id[0] == '\0') {
         return;
     }
 
-    /* 检查是否是命令消息 */
-    if (strstr(topic, TOPIC_COMMAND_SUFFIX)) {
-        cloud_cmd_t cmd = {0};
-        if (cloud_api_parse_command(payload, &cmd)) {
-            if (s_cmd_cb) {
-                s_cmd_cb(&cmd);
-            }
-        }
+    ESP_LOGI(TAG, "Handling MQTT message: topic=%s", topic);
+
+    char expect_cmd[96];
+    char expect_bind[96];
+    snprintf(expect_cmd, sizeof(expect_cmd), TOPIC_CMD_FMT, dev->device_id);
+    snprintf(expect_bind, sizeof(expect_bind), TOPIC_BIND_FMT, dev->device_id);
+
+    if (strcmp(topic, expect_cmd) == 0) {
+        cloud_api_handle_command(payload);
+        return;
+    }
+
+    if (strcmp(topic, expect_bind) == 0) {
+        cloud_api_handle_bind(payload);
         return;
     }
 
@@ -249,8 +300,13 @@ void cloud_api_report_schedules(void)
         return;
     }
 
+    /* 未绑定时不上报，避免在公共 broker 泄露投喂计划 */
+    if (!dev->bound || dev->user_id[0] == '\0') {
+        return;
+    }
+
     char topic[128];
-    snprintf(topic, sizeof(topic), "device/%s/schedules", dev->device_id);
+    snprintf(topic, sizeof(topic), TOPIC_SCHEDULES_FMT, dev->device_id);
 
     cJSON *root = cJSON_CreateObject();
     if (root == NULL) {
@@ -278,7 +334,7 @@ void cloud_api_report_schedules(void)
     cJSON_AddNumberToObject(root, "count", count);
     cJSON_AddNumberToObject(root, "ts", (double)time(NULL));
 
-    char *payload = cJSON_PrintUnformatted(root);
+    char *payload = secure_msg_pack_json(dev->temp_token, dev->user_id, root);
     cJSON_Delete(root);
     if (payload != NULL) {
         mqtt_client_publish_ex(topic, payload, 1, true);

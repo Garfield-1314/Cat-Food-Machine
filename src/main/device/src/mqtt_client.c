@@ -12,6 +12,7 @@
 #include "nvs_flash.h"
 #include "cJSON.h"
 #include "device/inc/wifi_app.h"
+#include "device/inc/secure_msg.h"
 
 static const char *TAG = "mqtt_client";
 
@@ -35,10 +36,10 @@ static char s_broker_uri[128] = {0};
 
 /* 主题定义 */
 #define TOPIC_STATUS_FMT        "device/%s/status"
-#define TOPIC_COMMAND_FMT       "device/%s/command"
-#define TOPIC_USER_COMMAND_FMT  "user/%s/device/%s/command"
-#define TOPIC_BIND_QUERY_FMT    "device/%s/bind_query"
-#define TOPIC_BIND_RESULT_FMT   "device/%s/bind_result"
+#define TOPIC_CMD_FMT           "device/%s/cmd"
+#define TOPIC_BIND_FMT          "device/%s/bind"
+#define TOPIC_BIND_ACK_FMT      "device/%s/bind_ack"
+#define TOPIC_SCHEDULES_FMT     "device/%s/schedules"
 
 /* 从 NVS 加载设备信息 */
 static esp_err_t load_device_info(void)
@@ -133,19 +134,18 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             ESP_LOGI(TAG, "MQTT Connected");
             s_state = MQTT_STATE_CONNECTED;
 
-            /* 订阅命令主题 */
-            if (s_device_info.bound) {
+            /* 订阅命令主题与绑定请求主题（是否处理由 cloud_api 判断） */
+            {
                 char topic[128];
-                snprintf(topic, sizeof(topic), TOPIC_USER_COMMAND_FMT,
-                        s_device_info.user_id, s_device_info.device_id);
+                snprintf(topic, sizeof(topic), TOPIC_CMD_FMT,
+                         s_device_info.device_id);
                 esp_mqtt_client_subscribe(s_client, topic, 1);
                 ESP_LOGI(TAG, "Subscribed to: %s", topic);
-            } else {
-                char topic[128];
-                snprintf(topic, sizeof(topic), TOPIC_BIND_RESULT_FMT,
-                        s_device_info.device_id);
+
+                snprintf(topic, sizeof(topic), TOPIC_BIND_FMT,
+                         s_device_info.device_id);
                 esp_mqtt_client_subscribe(s_client, topic, 1);
-                ESP_LOGI(TAG, "Subscribed to bind result: %s", topic);
+                ESP_LOGI(TAG, "Subscribed to: %s", topic);
             }
 
             /* 发布在线状态 */
@@ -246,14 +246,9 @@ esp_err_t mqtt_client_start(const char *broker_uri, const char *device_id,
         .session.last_will.retain = true,
     };
 
-    /* 设置认证信息 */
-    if (s_device_info.bound && s_device_info.user_id[0] != '\0') {
-        mqtt_cfg.credentials.username = s_device_info.device_id;
-        mqtt_cfg.credentials.authentication.password = s_device_info.user_id;
-    } else {
-        mqtt_cfg.credentials.username = s_device_info.device_id;
-        mqtt_cfg.credentials.authentication.password = s_device_info.temp_token;
-    }
+    /* 设置认证信息：公共 broker 不校验，但仍避免把 openid 作为密码外发 */
+    mqtt_cfg.credentials.username = s_device_info.device_id;
+    mqtt_cfg.credentials.authentication.password = s_device_info.temp_token;
 
     s_client = esp_mqtt_client_init(&mqtt_cfg);
     if (s_client == NULL) {
@@ -371,22 +366,36 @@ esp_err_t mqtt_client_publish_status(const char *status, bool bound)
     }
 
     cJSON *json = cJSON_CreateObject();
+    if (json == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
     cJSON_AddStringToObject(json, "status", status);
     cJSON_AddBoolToObject(json, "bound", bound);
     cJSON_AddStringToObject(json, "deviceId", s_device_info.device_id);
     cJSON_AddStringToObject(json, "ip", ip);
     cJSON_AddNumberToObject(json, "ts", (double)time(NULL));
 
-    if (bound) {
-        cJSON_AddStringToObject(json, "userId", s_device_info.user_id);
+    esp_err_t err = ESP_FAIL;
+    if (bound && s_device_info.user_id[0] != '\0') {
+        /* 已绑定：状态加密签名，云端验签后才信任 */
+        char *payload = secure_msg_pack_json(s_device_info.temp_token,
+                                             s_device_info.user_id, json);
+        if (payload != NULL) {
+            err = mqtt_client_publish_ex(topic, payload, 1, true);
+            free(payload);
+        } else {
+            ESP_LOGW(TAG, "Failed to pack status");
+        }
+    } else {
+        /* 未绑定：仅发布最小明文信息，便于云端提示设备在线 */
+        char *payload = cJSON_PrintUnformatted(json);
+        if (payload != NULL) {
+            err = mqtt_client_publish_ex(topic, payload, 1, true);
+            free(payload);
+        }
     }
 
-    char *payload = cJSON_PrintUnformatted(json);
     cJSON_Delete(json);
-
-    /* retained：云端可随时订阅到最新在线状态 */
-    esp_err_t err = mqtt_client_publish_ex(topic, payload, 1, true);
-    free(payload);
     return err;
 }
 
@@ -396,15 +405,30 @@ esp_err_t mqtt_client_publish_feed_done(uint8_t amount)
     snprintf(topic, sizeof(topic), TOPIC_STATUS_FMT, s_device_info.device_id);
 
     cJSON *json = cJSON_CreateObject();
+    if (json == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
     cJSON_AddStringToObject(json, "event", "feed_done");
     cJSON_AddNumberToObject(json, "amount", amount);
     cJSON_AddStringToObject(json, "deviceId", s_device_info.device_id);
 
-    char *payload = cJSON_PrintUnformatted(json);
-    cJSON_Delete(json);
+    esp_err_t err = ESP_FAIL;
+    if (s_device_info.bound && s_device_info.user_id[0] != '\0') {
+        char *payload = secure_msg_pack_json(s_device_info.temp_token,
+                                             s_device_info.user_id, json);
+        if (payload != NULL) {
+            err = mqtt_client_publish(topic, payload, 1);
+            free(payload);
+        }
+    } else {
+        char *payload = cJSON_PrintUnformatted(json);
+        if (payload != NULL) {
+            err = mqtt_client_publish(topic, payload, 1);
+            free(payload);
+        }
+    }
 
-    esp_err_t err = mqtt_client_publish(topic, payload, 1);
-    free(payload);
+    cJSON_Delete(json);
     return err;
 }
 
@@ -425,18 +449,8 @@ esp_err_t mqtt_client_set_bound_user(const char *user_id)
 
     esp_err_t err = save_device_info();
 
-    /* 在现有连接上切换订阅，避免在 MQTT 事件回调中 stop/destroy 客户端 */
+    /* 命令主题常驻订阅，绑定后无需切换订阅 */
     if (s_client != NULL && s_state == MQTT_STATE_CONNECTED) {
-        char topic[128];
-
-        snprintf(topic, sizeof(topic), TOPIC_BIND_RESULT_FMT, s_device_info.device_id);
-        esp_mqtt_client_unsubscribe(s_client, topic);
-
-        snprintf(topic, sizeof(topic), TOPIC_USER_COMMAND_FMT,
-                 s_device_info.user_id, s_device_info.device_id);
-        esp_mqtt_client_subscribe(s_client, topic, 1);
-        ESP_LOGI(TAG, "Subscribed to: %s", topic);
-
         mqtt_client_publish_status("online", true);
     }
 
@@ -445,30 +459,21 @@ esp_err_t mqtt_client_set_bound_user(const char *user_id)
 
 esp_err_t mqtt_client_clear_binding(void)
 {
-    /* 先退订旧用户的命令主题，再清除本地绑定 */
-    if (s_client != NULL && s_state == MQTT_STATE_CONNECTED &&
-        s_device_info.user_id[0] != '\0') {
-        char topic[128];
-        snprintf(topic, sizeof(topic), TOPIC_USER_COMMAND_FMT,
-                 s_device_info.user_id, s_device_info.device_id);
-        esp_mqtt_client_unsubscribe(s_client, topic);
-        ESP_LOGI(TAG, "Unsubscribed from: %s", topic);
-    }
-
     s_device_info.user_id[0] = '\0';
     s_device_info.bound = false;
     esp_err_t err = save_device_info();
 
-    /* 回到未绑定状态：重新订阅绑定结果主题 */
     if (s_client != NULL && s_state == MQTT_STATE_CONNECTED) {
-        char topic[128];
-        snprintf(topic, sizeof(topic), TOPIC_BIND_RESULT_FMT, s_device_info.device_id);
-        esp_mqtt_client_subscribe(s_client, topic, 1);
-        ESP_LOGI(TAG, "Subscribed to bind result: %s", topic);
         mqtt_client_publish_status("online", false);
     }
 
     return err;
+}
+
+esp_err_t mqtt_client_regenerate_token(void)
+{
+    generate_temp_token();
+    return save_device_info();
 }
 
 const device_info_t *mqtt_client_get_device_info(void)
