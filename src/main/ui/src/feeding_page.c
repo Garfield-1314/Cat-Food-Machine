@@ -5,6 +5,7 @@
 #include "esp_log.h"
 #include "ui/inc/ui.h"
 #include "driver/inc/feeding_schedule.h"
+#include "device/inc/cloud_api.h"
 
 static const char *TAG = "feeding_page";
 
@@ -414,6 +415,10 @@ static void save_btn_cb(lv_event_t *e)
 {
     (void)e;
     esp_err_t err = feed_schedule_save();
+    if (err == ESP_OK) {
+        /* 设备为准：本地保存后把最新列表同步到云端 */
+        cloud_api_report_schedules();
+    }
     lv_obj_t *label = lv_obj_get_child(save_btn, 0);
     if (label) {
         if (err == ESP_OK) {
@@ -485,4 +490,11 @@ lv_obj_t *create_feeding_page(void)
     lv_obj_add_event_cb(feeding_page, feeding_page_delete_cb, LV_EVENT_DELETE, NULL);
 
     return feeding_page;
+}
+
+void feeding_page_refresh(void)
+{
+    if (feeding_page != NULL) {
+        rebuild_list();
+    }
 }

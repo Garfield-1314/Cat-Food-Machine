@@ -80,6 +80,14 @@ esp_err_t feed_schedule_set_item(int index, const feed_schedule_item_t *item);
 esp_err_t feed_schedule_add_item(const feed_schedule_item_t *item);
 
 /**
+ * @brief 全量替换投喂计划列表（用于云端同步）
+ * @param items 计划项数组
+ * @param count 计划项数量 (0 ~ MAX_SCHEDULE_ITEMS)
+ * @return ESP_OK 成功
+ */
+esp_err_t feed_schedule_replace_all(const feed_schedule_item_t *items, int count);
+
+/**
  * @brief 删除指定索引的投喂计划项
  * @param index 索引
  * @return ESP_OK 成功，否则失败

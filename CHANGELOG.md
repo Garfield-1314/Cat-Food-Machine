@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Security
+
+- **Application-layer encryption and authentication**
+  - New `secure_msg` module (mbedTLS AES-256-GCM + HMAC-SHA256) matching the cloud `secure.js` envelope; keys are derived from the QR token plus the owner openid, so no secret is ever transmitted
+  - Incoming commands are verified/decrypted, checked against a ±120 s timestamp window and a 16-entry nonce replay cache before execution
+  - Binding now uses an encrypted challenge/response on `device/<id>/bind` / `device/<id>/bind_ack`; every request raises an on-screen Allow/Deny popup, and an already-bound device can be rebound only after on-screen confirmation
+  - A denied or timed-out request publishes a retained negative ack (`ack:false` with a reason) so the cloud can report the failure immediately
+  - Status, schedules and snapshots are encrypted (unbound devices only publish minimal plaintext status and no schedules)
+  - MQTT topics changed to `device/<id>/cmd` + `device/<id>/bind`; the openid-based command topic and `bind_result` topic were removed
+  - `unbind` clears the binding and rotates the temporary token so old QR codes become invalid
+  - MQTT password is now the temporary token instead of the openid
+
+### Added
+
+- **Cloud binding, unbinding, and schedule synchronization (MQTT)**
+  - Binding results are now verified against the device's temporary token; a mismatch is rejected with a warning
+  - New `unbind` command clears the persisted binding, stops remote capture, and switches the device back to the unbound bind-result subscription
+  - The device is the source of truth for feeding schedules: it publishes its list as a retained `device/<id>/schedules` message after MQTT connect and after local edits, applies full-list `sync_schedules` commands, and republishes on `get_schedules`
+
+- **On-screen binding QR code**
+  - Tapping the camera icon on the home page opens a popup with a QR code containing `{"d":"<device_id>","t":"<temp_token>","ts":<unix>}` plus the device ID; the popup closes on tap or after 20 seconds
+  - The QR code is rendered with the LVGL built-in `lv_qrcode` widget (`CONFIG_LV_USE_QRCODE=y`)
+
+- **On-screen binding confirmation**
+  - New `bind_popup` UI module: an incoming bind request closes the QR popup, wakes the backlight and shows a modal "Bind Request" dialog with Allow/Deny buttons (English, since the firmware only ships the Montserrat font set)
+  - No action for 25 s auto-denies and publishes a retained `ack:false` with `reason:"timeout"`; tapping Deny publishes `reason:"user_denied"`
+  - The bind request is held in `cloud_api` behind a mutex because the MQTT task writes it while the LVGL task reads it; the ack is only published after the user taps Allow, and NVS persistence failure publishes `reason:"persist_failed"` instead of a success ack
+
+- **Remote snapshot capture**
+  - New `start_capture`/`stop_capture` commands capture a JPEG every 5 s and publish it base64-encoded as a retained `device/<id>/image` message; stopping clears the retained image
+
+- **Online status and liveness**
+  - Status messages now include `ip` and `ts`, and are published as retained messages so the cloud can read the latest state at any time
+  - MQTT Last Will plus a 60 s heartbeat keep the retained online/offline state accurate, including after power loss
+
+### Fixed
+
+- **Binding requests were dropped after RTC clock drift**
+  - `sntp_time_init()` used to skip SNTP whenever the RTC time merely looked valid (year ≥ 2024), so a drifted clock was never corrected and bind requests failed the ±120 s timestamp check (observed: 530 s off); it now always starts SNTP to correct the clock, while still marking the time usable for the UI
+  - SNTP now uses `SNTP_SYNC_MODE_IMMED` instead of `SNTP_SYNC_MODE_SMOOTH`; ESP-IDF's smooth mode slews via `adjtime` at 1/64 of real time, so a 530 s error would have taken about 9 hours to correct, leaving commands and status timestamps wrong in the meantime
+  - The 24 h resync timer is now restarted after each sync; previously it was created once and never restarted after the one-shot expired, so resynchronization ran at most once
+  - Bind requests now use a ±3600 s timestamp window (`secure_msg_accept_message_window`) so a not-yet-synced or slightly drifted clock can still bind; commands keep the strict ±120 s window
+
+- **Binding/unbinding could deadlock the MQTT client**
+  - The bind and unbind flows used to call `esp_mqtt_client_stop()` / `esp_mqtt_client_destroy()` from inside the MQTT event handler, which ESP-IDF does not allow; the device now switches subscriptions on the live connection (unsubscribe `device/<id>/bind_result`, subscribe `user/<uid>/device/<id>/command`, or the reverse) and republishes its status, with no client restart
+  - MQTT is also started from the WiFi-already-connected fallback path at boot (previously only SNTP and the HTTP server were started there)
+
+- **Schedule update/delete could target the wrong item**
+  - The cloud addressed schedules by their sorted database index while the device used its NVS insertion order; the protocol now uses full-list synchronization, so the two sides cannot diverge
+
+- **Binding state was not persisted after a successful bind**
+  - `mqtt_client_set_bound_user()` now writes the user ID and bound flag to NVS, so the binding survives a reboot
+
+### Changed
+
+- Removed unused managed dependencies (`espressif/esp_mqtt`, `espressif/cJSON`, `espressif/qrcode`); the IDF built-in `mqtt` and `json` components are used instead
+
 ## [0.2.2] - 2026-09-06
 
 ### Added
@@ -227,6 +286,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 项目版本遵循 [语义化版本规范](https://semver.org/spec/v2.0.0.html)。
 
 ---
+
+## [未发布]
+
+### 新增
+
+- **MQTT 绑定、解绑与定时任务同步**
+  - 绑定结果新增 token 校验，token 不匹配将拒绝绑定并告警
+  - 新增 `unbind` 指令：清除已持久化的绑定、停止远程截图，并切换回未绑定状态的绑定结果订阅
+  - 定时任务以设备为准：设备在 MQTT 连接后和本地修改后，以 retained 消息上报 `device/<id>/schedules`；收到 `sync_schedules` 时全量替换并回读确认；收到 `get_schedules` 时重新上报
+
+- **屏幕绑定二维码**
+  - 点击主页摄像头图标弹出二维码，内容为 `{"d":"<设备ID>","t":"<临时Token>","ts":<unix>}`，并显示设备 ID；点击或 20 秒后自动关闭
+  - 二维码使用 LVGL 内置 `lv_qrcode` 组件渲染（`CONFIG_LV_USE_QRCODE=y`）
+
+- **远程截图**
+  - 新增 `start_capture`/`stop_capture` 指令，每 5 秒抓取一帧 JPEG 并以 base64 retained 发布到 `device/<id>/image`；停止时清除 retained 图片
+
+- **在线状态与保活**
+  - 状态消息新增 `ip` 与 `ts`，并改为 retained 发布，云端可随时读取最新状态
+  - 配置 MQTT 遗嘱（LWT）并增加 60 秒心跳，掉电/断网后在线状态仍准确
+
+### 修复
+
+- **绑定/解绑可能导致 MQTT 客户端死锁**
+  - 绑定与解绑流程原先在 MQTT 事件回调中调用 `esp_mqtt_client_stop()` / `esp_mqtt_client_destroy()`，ESP-IDF 不允许这样做；现在改为在现有连接上切换订阅（退订 `device/<id>/bind_result`、订阅 `user/<uid>/device/<id>/command`，或反向操作）并补发状态，不再重启客户端
+  - 开机时若 WiFi 在回调注册前已连接，兜底分支现在也会启动 MQTT（此前只启动 SNTP 和 HTTP 服务）
+
+- **定时任务改/删可能操作错误条目**
+  - 云端按数据库排序下标定位，设备按 NVS 插入顺序定位，两边不一致；现改为全量同步，避免两端分叉
+
+- **绑定成功后未持久化绑定状态**
+  - `mqtt_client_set_bound_user()` 现在会把用户 ID 和绑定标志写入 NVS，重启后仍保持绑定
+
+### 变更
+
+- 移除未使用的组件依赖（`espressif/esp_mqtt`、`espressif/cJSON`、`espressif/qrcode`），改用 IDF 内置的 `mqtt` 与 `json`
 
 ## [0.2.2] - 2026-09-06
 

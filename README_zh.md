@@ -13,6 +13,10 @@
 - **步进电机出粮** — A4988 驱动步进电机，6 仓食仓，1 仓格 = 60° 旋转
 - **OV2640 摄像头** — OV2640 DVP 8-bit 并行接口，原生 640×480 JPEG，按需采集
 - **WiFi 联网** — Station 模式，支持保存一个 WiFi 配置、界面配置及设备 IP 显示
+- **云端连接 (MQTT)** — MQTT 客户端，设备 ID 基于 MAC、随机临时 Token；扫描屏幕二维码并确认后绑定微信账号，在 `device/<id>/cmd` 接收 `feed`/定时/截图指令，并以 retained 消息上报状态（`online`/`offline`、`ip`、`ts`）、定时列表和截图
+- **二维码绑定** — 点击主页摄像头图标弹出二维码，内容为 `{"d":"<设备ID>","t":"<临时Token>","ts":<unix>}`，使用 LVGL 内置 `lv_qrcode` 渲染；点击或 20 秒后自动关闭
+- **屏幕绑定确认** — 收到加密绑定请求时弹出 `Bind Request` 确认框（Allow/Deny），25 秒无操作自动拒绝；已绑定设备会提示是否更换绑定，因此云端记录丢失时可通过重新扫码 + 屏幕确认恢复
+- **远程截图上传** — `start_capture`/`stop_capture` 指令每 5 秒把 base64 JPEG 发布到 retained 主题 `device/<id>/image`，停止时清除 retained 图片
 - **局域网按需视频推流** — 通过 HTTP-MJPEG 提供视频流，浏览器访问 `http://<设备IP>/`，发送阻塞后自动重连
 - **SNTP 时间同步** — 通过 NTP 自动同步时间（北京时间，UTC+8）
 - **背光自动熄灭** — 5 分钟无操作自动熄灭背光，触摸唤醒
@@ -36,6 +40,8 @@ Cat-Food-Machine/
 │   │   │   ├── inc/         #   - st7789.h, gt911.h, user_lvgl.h
 │   │   │   │                #   - ov2640.h, video_stream.h, ir_light.h
 │   │   │   │                #   - wifi_app.h, sntp_time.h
+│   │   │   │                #   - mqtt_client.h, cloud_api.h
+│   │   │   │                #   - cloud_upload.h, qrcode_gen.h
 │   │   │   └── src/         # 驱动实现
 │   │   ├── driver/          # 应用层驱动
 │   │   │   ├── inc/         #   - feeder_motor.h, feeding_schedule.h
@@ -43,6 +49,7 @@ Cat-Food-Machine/
 │   │   └── ui/              # LVGL 用户界面
 │   │       ├── inc/         #   - ui.h, app_page.h, feeding_page.h
 │   │       │                #   - setting_page.h, wifi_config_page.h
+│   │       │                #   - qr_popup.h, bind_popup.h
 │   │       └── src/         # UI 实现
 ├── README.md                # 英文说明
 ├── README_zh.md             # 本文件 (中文说明)
@@ -52,9 +59,12 @@ Cat-Food-Machine/
 ## 🧩 工程架构与运行流程
 
 固件是一个 ESP-IDF 应用组件，启动顺序为：初始化 NVS、ST7789/LVGL 和
-GT911、A4988 电机、OV2640 摄像头、主页 UI、投喂计划、背光以及 WiFi。
-WiFi 获取 IPv4 地址后启动 SNTP 和 HTTP 服务；随后 `main` 任务返回，独立的
-LVGL 任务以 50 Hz 运行界面循环。
+GT911、A4988 电机、OV2640 摄像头、主页 UI、投喂计划、背光、MQTT/云端 API
+以及 WiFi。WiFi 获取 IPv4 地址后启动 SNTP、HTTP 服务和 MQTT 客户端。
+MQTT 连接成功后，设备订阅命令主题 `device/<id>/cmd` 与绑定请求主题
+`device/<id>/bind`，发布 retained 在线状态并上报当前定时列表；绑定请求会触发
+屏幕确认弹窗，确认后才写入绑定。随后 `main` 任务返回，独立的 LVGL 任务以
+50 Hz 运行界面循环。
 
 - 投喂调度器每秒检查一次启用的计划；系统时间未同步前不会触发电机。
 - WiFi 扫描在 FreeRTOS 任务中执行，结果只通过 LVGL 定时器回调更新界面。
@@ -256,8 +266,10 @@ WPA3/OWE 已关闭；保留 WiFi 通用 IRAM 优化以保证 MJPEG 发送，仅�
 - 设置页显示 IDF/LVGL 版本、芯片版本、触摸芯片、固件版本、WiFi MAC 地址，
   并提供 30–100% 的背光滑块。
 - 连续 5 分钟没有触摸操作时背光自动关闭；触摸或投喂活动会唤醒背光。
-- 点击主页的摄像头图标，可查看 Web 推流地址（`http://<设备IP>/`），
-  用浏览器打开即可观看实时画面。
+- 点击主页的摄像头图标会弹出绑定二维码（设备 ID + 临时 Token）并显示设备
+  ID；点击或 20 秒后自动关闭。用浏览器打开 `http://<设备IP>/` 可观看实时画面。
+- 云端下发加密绑定请求时，设备会关闭二维码弹窗、唤醒背光并弹出 `Bind Request`
+  确认框（Allow/Deny），25 秒无操作自动拒绝；只有点击 Allow 才会写入 NVS 并回 ack。
 
 ## 📖 API 概览
 

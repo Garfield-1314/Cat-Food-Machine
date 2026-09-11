@@ -13,6 +13,9 @@
 #include "device/inc/ir_light.h"
 #include "device/inc/ov2640.h"
 #include "device/inc/video_stream.h"
+#include "device/inc/mqtt_client.h"
+#include "device/inc/cloud_api.h"
+#include "device/inc/cloud_upload.h"
 
 #include "ui/inc/ui.h"
 

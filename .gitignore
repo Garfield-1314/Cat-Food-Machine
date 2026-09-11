@@ -21,3 +21,6 @@ sim/*.png
 *.swp
 *.swo
 *~
+
+# Independent mini-program repository (kept here for development convenience)
+Cat-Food-Machine-App/
