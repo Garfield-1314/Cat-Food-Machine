@@ -48,6 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Binding requests were dropped after RTC clock drift**
   - `sntp_time_init()` used to skip SNTP whenever the RTC time merely looked valid (year ≥ 2024), so a drifted clock was never corrected and bind requests failed the ±120 s timestamp check (observed: 530 s off); it now always starts SNTP to correct the clock, while still marking the time usable for the UI
+  - SNTP now uses `SNTP_SYNC_MODE_IMMED` instead of `SNTP_SYNC_MODE_SMOOTH`; ESP-IDF's smooth mode slews via `adjtime` at 1/64 of real time, so a 530 s error would have taken about 9 hours to correct, leaving commands and status timestamps wrong in the meantime
+  - The 24 h resync timer is now restarted after each sync; previously it was created once and never restarted after the one-shot expired, so resynchronization ran at most once
   - Bind requests now use a ±3600 s timestamp window (`secure_msg_accept_message_window`) so a not-yet-synced or slightly drifted clock can still bind; commands keep the strict ±120 s window
 
 - **Binding/unbinding could deadlock the MQTT client**

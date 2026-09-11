@@ -45,7 +45,8 @@ static void resync_timer_cb(void *arg)
     esp_sntp_setservername(1, NTP_SERVER2);
     esp_sntp_setservername(2, NTP_SERVER3);
     esp_sntp_set_time_sync_notification_cb(time_sync_cb);
-    sntp_set_sync_mode(SNTP_SYNC_MODE_SMOOTH);
+    /* SMOOTH 用 adjtime 以 1/64 速率缓慢校正，大偏差需数小时；必须用 IMMED 立即校准 */
+    sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);
 
     esp_sntp_init();
 }
@@ -53,24 +54,25 @@ static void resync_timer_cb(void *arg)
 /* 启动 24 小时重新同步定时器 */
 static void start_resync_timer(void)
 {
-    if (s_resync_timer != NULL) {
-        return;
+    if (s_resync_timer == NULL) {
+        esp_timer_create_args_t timer_args = {
+            .callback = &resync_timer_cb,
+            .arg = NULL,
+            .name = "sntp_resync",
+            .dispatch_method = ESP_TIMER_TASK,
+        };
+
+        esp_err_t ret = esp_timer_create(&timer_args, &s_resync_timer);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to create resync timer: %s", esp_err_to_name(ret));
+            return;
+        }
     }
 
-    esp_timer_create_args_t timer_args = {
-        .callback = &resync_timer_cb,
-        .arg = NULL,
-        .name = "sntp_resync",
-        .dispatch_method = ESP_TIMER_TASK,
-    };
+    /* 一次性定时器触发后必须重新 start；之前只创建一次导致 24h 重同步只执行一次 */
+    esp_timer_stop(s_resync_timer);
 
-    esp_err_t ret = esp_timer_create(&timer_args, &s_resync_timer);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to create resync timer: %s", esp_err_to_name(ret));
-        return;
-    }
-
-    ret = esp_timer_start_once(s_resync_timer, RESYNC_INTERVAL_SEC * 1000000ULL);
+    esp_err_t ret = esp_timer_start_once(s_resync_timer, RESYNC_INTERVAL_SEC * 1000000ULL);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start resync timer: %s", esp_err_to_name(ret));
     } else {
@@ -124,11 +126,10 @@ void sntp_time_init(void)
     esp_sntp_setservername(1, NTP_SERVER2);
     esp_sntp_setservername(2, NTP_SERVER3);
     esp_sntp_set_time_sync_notification_cb(time_sync_cb);
-    sntp_set_sync_mode(SNTP_SYNC_MODE_SMOOTH);
+    /* 立即校准，避免 adjtime 缓慢修正导致时间窗校验失败 */
+    sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);
 
     esp_sntp_init();
-
-    ESP_LOGI(TAG, "SNTP initialized, waiting for time sync...");
 }
 
 bool sntp_time_get_local(struct tm *tm)
