@@ -24,6 +24,7 @@ SRCS "main.c"
 "ui/src/wifi_config_page.c"
 "ui/src/feeding_page.c"
 "ui/src/qr_popup.c"
+"ui/src/bind_popup.c"
 
                     INCLUDE_DIRS "."
                     REQUIRES esp_lcd esp_driver_gpio esp_driver_i2c esp_driver_cam esp_http_server nvs_flash esp_timer esp_wifi esp_netif esp_event lwip mqtt json mbedtls

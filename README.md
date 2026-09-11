@@ -13,8 +13,9 @@ An ESP32-S3 based **intelligent cat feeder** with touchscreen UI, WiFi connectiv
 - **Stepper Motor Dispensing** — A4988 driven stepper motor, 6-bin hopper, 1 slot = 60° rotation
 - **OV2640 Camera** — OV2640 DVP 8-bit parallel interface, native 640×480 JPEG captured on demand
 - **WiFi Connectivity** — Station mode with one saved credential set, on-screen WiFi configuration and device IP display
-- **Cloud Connectivity (MQTT)** — MQTT client with a MAC-based device ID and a random temporary token; binds to a WeChat account by scanning the on-screen QR code, receives `feed` / schedule / capture commands on `user/<openid>/device/<id>/command`, and reports retained status (`online`/`offline`, `ip`, `ts`), schedule lists, and snapshot images
+- **Cloud Connectivity (MQTT)** — MQTT client with a MAC-based device ID and a random temporary token; binds to a WeChat account after scanning the on-screen QR code and confirming on the device, receives `feed` / schedule / capture commands on `device/<id>/cmd`, and reports retained status (`online`/`offline`, `ip`, `ts`), schedule lists, and snapshot images
 - **QR Binding** — Tapping the home-page camera icon shows a QR code containing `{"d":"<device_id>","t":"<temp_token>","ts":<unix>}`, rendered with LVGL's built-in `lv_qrcode` widget; the popup closes on tap or after 20 seconds
+- **On-screen Binding Confirmation** — Every encrypted bind request raises a modal `Bind Request` popup with `Allow` / `Deny` buttons (English); no action for 25 seconds auto-denies. An already-bound device shows "Replace existing binding?", so a device whose cloud record was lost can be recovered by scanning and confirming again
 - **Remote Snapshot Upload** — `start_capture` / `stop_capture` commands publish a base64 JPEG to the retained `device/<id>/image` topic every 5 seconds; stopping clears the retained image
 - **On-demand LAN Video Streaming** — HTTP-MJPEG stream at `http://<device-ip>/stream`, with a self-reconnecting browser page at `http://<device-ip>/`
 - **SNTP Time Sync** — Automatic time synchronization via NTP (Beijing time, UTC+8)
@@ -48,7 +49,7 @@ Cat-Food-Machine/
 │   │   └── ui/              # LVGL user interface
 │   │       ├── inc/         #   - ui.h, app_page.h, feeding_page.h
 │   │       │                #   - setting_page.h, wifi_config_page.h
-│   │       │                #   - qr_popup.h
+│   │       │                #   - qr_popup.h, bind_popup.h
 │   │       └── src/         # UI implementations
 ├── README.md                # English documentation
 ├── README_zh.md             # Chinese documentation
@@ -61,10 +62,11 @@ The firmware is one ESP-IDF application component. Initialization is performed
 in this order: NVS flash, ST7789/LVGL and GT911, A4988 motor, OV2640 sensor,
 home UI, feeding schedule, backlight, MQTT/cloud API, and WiFi. After WiFi
 obtains an IPv4 address, SNTP, the HTTP server, and the MQTT client are started.
-When the MQTT connection is up, the device subscribes to its bind-result topic
-(while unbound) or the bound user's command topic, publishes its retained
-status, and reports the current schedule list. The main task then returns and
-the dedicated LVGL task runs the UI loop at 50 Hz.
+When the MQTT connection is up, the device subscribes to the command topic
+`device/<id>/cmd` and the bind-request topic `device/<id>/bind`, publishes its
+retained status, and reports the current schedule list; bind requests raise the
+on-screen confirmation popup and are only persisted after Allow. The main task
+then returns and the dedicated LVGL task runs the UI loop at 50 Hz.
 
 - The feeding scheduler checks enabled schedules once per second. It waits for
   a valid synchronized clock before triggering the motor.
@@ -300,6 +302,10 @@ to 32 first.
 - Tapping the camera icon on the home page shows the binding QR code (device
   ID + temporary token) and the device ID; the popup closes on tap or after
   20 seconds. Open `http://<device-ip>/` in a browser to watch the live feed.
+- When the cloud sends an encrypted bind request, the device closes the QR
+  popup, wakes the backlight and shows a modal `Bind Request` dialog with
+  `Allow` / `Deny`; no action for 25 seconds auto-denies. The binding is only
+  written to NVS after `Allow`.
 
 ## 📖 API Overview
 

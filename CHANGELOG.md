@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Application-layer encryption and authentication**
   - New `secure_msg` module (mbedTLS AES-256-GCM + HMAC-SHA256) matching the cloud `secure.js` envelope; keys are derived from the QR token plus the owner openid, so no secret is ever transmitted
   - Incoming commands are verified/decrypted, checked against a ±120 s timestamp window and a 16-entry nonce replay cache before execution
-  - Binding now uses an encrypted challenge/response on `device/<id>/bind` / `device/<id>/bind_ack`; bind requests are ignored while already bound
+  - Binding now uses an encrypted challenge/response on `device/<id>/bind` / `device/<id>/bind_ack`; every request raises an on-screen Allow/Deny popup, and an already-bound device can be rebound only after on-screen confirmation
+  - A denied or timed-out request publishes a retained negative ack (`ack:false` with a reason) so the cloud can report the failure immediately
   - Status, schedules and snapshots are encrypted (unbound devices only publish minimal plaintext status and no schedules)
   - MQTT topics changed to `device/<id>/cmd` + `device/<id>/bind`; the openid-based command topic and `bind_result` topic were removed
   - `unbind` clears the binding and rotates the temporary token so old QR codes become invalid
@@ -30,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **On-screen binding QR code**
   - Tapping the camera icon on the home page opens a popup with a QR code containing `{"d":"<device_id>","t":"<temp_token>","ts":<unix>}` plus the device ID; the popup closes on tap or after 20 seconds
   - The QR code is rendered with the LVGL built-in `lv_qrcode` widget (`CONFIG_LV_USE_QRCODE=y`)
+
+- **On-screen binding confirmation**
+  - New `bind_popup` UI module: an incoming bind request closes the QR popup, wakes the backlight and shows a modal "Bind Request" dialog with Allow/Deny buttons (English, since the firmware only ships the Montserrat font set)
+  - No action for 25 s auto-denies and publishes a retained `ack:false` with `reason:"timeout"`; tapping Deny publishes `reason:"user_denied"`
+  - The bind request is held in `cloud_api` behind a mutex because the MQTT task writes it while the LVGL task reads it; the ack is only published after the user taps Allow, and NVS persistence failure publishes `reason:"persist_failed"` instead of a success ack
 
 - **Remote snapshot capture**
   - New `start_capture`/`stop_capture` commands capture a JPEG every 5 s and publish it base64-encoded as a retained `device/<id>/image` message; stopping clears the retained image

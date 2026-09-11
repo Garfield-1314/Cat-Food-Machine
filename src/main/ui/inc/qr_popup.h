@@ -12,6 +12,11 @@ extern "C" {
  */
 void qr_popup_show(void);
 
+/**
+ * @brief 立即关闭设备二维码窗口
+ */
+void qr_popup_hide(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -2,6 +2,8 @@
 
 #include <string.h>
 #include "ui/inc/feeding_page.h"
+#include "ui/inc/bind_popup.h"
+#include "ui/inc/qr_popup.h"
 
 static const char *TAG = "main";
 
@@ -22,6 +24,10 @@ static uint8_t s_backlight_restore_brightness = 100;
 
 /* 非 LVGL 上下文（调度器任务）请求恢复背光，由 LVGL 定时器消费 */
 static volatile bool s_backlight_restore_pending = false;
+
+/* ========== 绑定确认弹窗 ========== */
+/* 设备端等待用户确认绑定的最长时间，超时按拒绝处理（云端等待预算不短于该值） */
+#define BIND_CONFIRM_TIMEOUT_MS 25000
 
 /* 云端命令回调 */
 static void on_cloud_command(const cloud_cmd_t *cmd)
@@ -293,6 +299,31 @@ static void feeding_popup_timer_cb(lv_timer_t *timer)
     }
 }
 
+/* LVGL 定时器回调：轮询待确认绑定请求，显示/关闭确认弹窗（在 LVGL 上下文中执行） */
+static void bind_popup_timer_cb(lv_timer_t *timer)
+{
+    (void)timer;
+
+    int64_t age_ms = cloud_api_pending_age_ms();
+
+    if (age_ms >= 0 && age_ms >= BIND_CONFIRM_TIMEOUT_MS) {
+        ESP_LOGI(TAG, "Bind confirmation timed out (%lld ms)", (long long)age_ms);
+        cloud_api_resolve_bind(false, "timeout");
+        age_ms = -1;
+    }
+
+    if (age_ms >= 0) {
+        if (!bind_popup_is_visible()) {
+            /* 二维码弹窗会挡住确认框；同时唤醒背光，避免用户看不到确认请求 */
+            qr_popup_hide();
+            restore_backlight_lvgl();
+            bind_popup_show(mqtt_client_is_bound());
+        }
+    } else if (bind_popup_is_visible()) {
+        bind_popup_hide();
+    }
+}
+
 esp_err_t user_component_init(void)
 {
     /* 初始化 NVS 闪存（必须最先调用，WiFi、SNTP、投喂计划都依赖它） */
@@ -388,6 +419,9 @@ esp_err_t user_component_init(void)
     if (cloud_init_err != ESP_OK) {
         ESP_LOGW(TAG, "Cloud API init failed: %s", esp_err_to_name(cloud_init_err));
     }
+
+    /* 创建 LVGL 定时器用于轮询绑定确认请求（每 200ms 检查一次） */
+    lv_timer_create(bind_popup_timer_cb, 200, NULL);
 
     /* 注册云端命令回调 */
     cloud_api_register_cmd_cb(on_cloud_command);

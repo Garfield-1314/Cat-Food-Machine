@@ -53,11 +53,47 @@ typedef struct {
 /* 云端命令回调 */
 typedef void (*cloud_cmd_cb_t)(const cloud_cmd_t *cmd);
 
+/* 等待屏幕确认的绑定请求 */
+typedef struct {
+    char user_id[65];
+    char nonce[33];
+} cloud_bind_request_t;
+
 /**
  * @brief 初始化云端 API 模块
  * @return ESP_OK 成功
  */
 esp_err_t cloud_api_init(void);
+
+/**
+ * @brief 是否存在等待屏幕确认的绑定请求
+ * @return true 有待确认请求
+ */
+bool cloud_api_has_pending_bind(void);
+
+/**
+ * @brief 获取等待确认的绑定请求（拷贝，线程安全）
+ * @param out 输出结构体
+ * @return true 存在待确认请求
+ */
+bool cloud_api_get_pending_bind(cloud_bind_request_t *out);
+
+/**
+ * @brief 待确认请求已等待的时长
+ * @return 毫秒；无待确认请求返回 -1
+ */
+int64_t cloud_api_pending_age_ms(void);
+
+/**
+ * @brief 提交屏幕确认结果
+ *
+ * allow=true 时写入绑定并回 ack:true；allow=false 时回 ack:false(retained)。
+ * 可在 LVGL 任务中调用。
+ *
+ * @param allow 是否允许绑定
+ * @param reason 拒绝原因（allow=false 时使用，可为 NULL）
+ */
+void cloud_api_resolve_bind(bool allow, const char *reason);
 
 /**
  * @brief 处理 MQTT 消息

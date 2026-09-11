@@ -43,6 +43,11 @@ static void qr_popup_close_timer_cb(lv_timer_t *timer)
     qr_popup_close();
 }
 
+void qr_popup_hide(void)
+{
+    qr_popup_close();
+}
+
 static void qr_popup_clicked_cb(lv_event_t *e)
 {
     (void)e;
