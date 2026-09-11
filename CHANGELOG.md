@@ -46,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Binding requests were dropped after RTC clock drift**
+  - `sntp_time_init()` used to skip SNTP whenever the RTC time merely looked valid (year ≥ 2024), so a drifted clock was never corrected and bind requests failed the ±120 s timestamp check (observed: 530 s off); it now always starts SNTP to correct the clock, while still marking the time usable for the UI
+  - Bind requests now use a ±3600 s timestamp window (`secure_msg_accept_message_window`) so a not-yet-synced or slightly drifted clock can still bind; commands keep the strict ±120 s window
+
 - **Binding/unbinding could deadlock the MQTT client**
   - The bind and unbind flows used to call `esp_mqtt_client_stop()` / `esp_mqtt_client_destroy()` from inside the MQTT event handler, which ESP-IDF does not allow; the device now switches subscriptions on the live connection (unsubscribe `device/<id>/bind_result`, subscribe `user/<uid>/device/<id>/command`, or the reverse) and republishes its status, with no client restart
   - MQTT is also started from the WiFi-already-connected fallback path at boot (previously only SNTP and the HTTP server were started there)

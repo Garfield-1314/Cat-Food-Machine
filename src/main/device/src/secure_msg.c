@@ -368,6 +368,11 @@ cJSON *secure_msg_unpack_json(const char *token, const char *openid,
 
 bool secure_msg_accept_message(const cJSON *obj)
 {
+    return secure_msg_accept_message_window(obj, TS_WINDOW_SEC);
+}
+
+bool secure_msg_accept_message_window(const cJSON *obj, int64_t window_sec)
+{
     if (obj == NULL) {
         return false;
     }
@@ -388,8 +393,9 @@ bool secure_msg_accept_message(const cJSON *obj)
     /* 时间未同步时跳过时间窗校验，仍由 nonce 防重放 */
     if (now > 1704067200) { /* 2024-01-01 */
         int64_t diff = now - msg_ts;
-        if (diff > TS_WINDOW_SEC || diff < -TS_WINDOW_SEC) {
-            ESP_LOGW(TAG, "timestamp out of window (%lld)", (long long)diff);
+        if (diff > window_sec || diff < -window_sec) {
+            ESP_LOGW(TAG, "timestamp out of window (%lld, limit %lld)",
+                     (long long)diff, (long long)window_sec);
             return false;
         }
     }

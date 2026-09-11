@@ -29,6 +29,9 @@ static int64_t s_bind_received_us = 0;
 #define TOPIC_BIND_ACK_FMT   "device/%s/bind_ack"
 #define TOPIC_SCHEDULES_FMT  "device/%s/schedules"
 
+/* 绑定握手允许的时钟偏差；设备时钟可能尚未同步或存在漂移，指令仍用 ±120s */
+#define BIND_TS_WINDOW_SEC   3600
+
 static void bind_lock(void)
 {
     if (s_bind_mutex != NULL) {
@@ -308,7 +311,7 @@ static void cloud_api_handle_bind(const char *payload)
         return;
     }
 
-    if (!secure_msg_accept_message(obj)) {
+    if (!secure_msg_accept_message_window(obj, BIND_TS_WINDOW_SEC)) {
         cJSON_Delete(obj);
         return;
     }

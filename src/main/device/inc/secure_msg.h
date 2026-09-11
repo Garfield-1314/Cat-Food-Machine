@@ -65,6 +65,17 @@ cJSON *secure_msg_unpack_json(const char *token, const char *openid,
  */
 bool secure_msg_accept_message(const cJSON *obj);
 
+/**
+ * @brief 防重放校验（自定义时间窗）
+ *
+ * 绑定握手对时钟漂移更宽容；指令仍应使用默认的 ±120s 窗口。
+ *
+ * @param obj 已解密的消息对象（需含 nonce/ts 字段）
+ * @param window_sec 允许的时间偏差（秒）
+ * @return true 通过并记录 nonce；false 拒绝
+ */
+bool secure_msg_accept_message_window(const cJSON *obj, int64_t window_sec);
+
 #ifdef __cplusplus
 }
 #endif

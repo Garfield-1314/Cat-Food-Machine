@@ -110,18 +110,15 @@ void sntp_time_init(void)
     localtime_r(&now, &timeinfo);
 
     if (timeinfo.tm_year >= (2024 - 1900)) {
-        /* 时间已经设置过（可能是从 RTC 恢复） */
+        /* RTC 时间可用：先标记为已同步保证 UI/调度可用，但仍启动 SNTP 纠正漂移 */
         s_time_synced = true;
-        ESP_LOGI(TAG, "Time already set");
-
-        /* 仍然启动 24h 重新同步定时器 */
+        ESP_LOGW(TAG, "RTC time looks set, still syncing via SNTP to correct drift");
         start_resync_timer();
-        return;
+    } else {
+        ESP_LOGI(TAG, "Initializing SNTP...");
     }
 
-    ESP_LOGI(TAG, "Initializing SNTP...");
-
-    /* 配置 SNTP - 使用经典 API */
+    /* 无论 RTC 是否有时间，都启动 SNTP；否则 RTC 漂移会导致时间窗校验失败 */
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
     esp_sntp_setservername(0, NTP_SERVER1);
     esp_sntp_setservername(1, NTP_SERVER2);
