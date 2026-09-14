@@ -113,6 +113,27 @@ idf.py build
 idf.py flash monitor
 ```
 
+### 3. Flash Pre-built Firmware
+
+Download the pre-built firmware binaries from [GitHub Releases](https://github.com/Garfield-1314/Cat-Food-Machine/releases) and flash them using `esptool.py`:
+
+```bash
+esptool.py --chip esp32s3 -b 460800 \
+  --before default_reset --after hard_reset \
+  write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m \
+  0x0 bootloader.bin \
+  0x8000 partition-table.bin \
+  0x10000 cat_food.bin
+```
+
+| File | Flash Address | Description |
+|------|---------------|-------------|
+| `bootloader.bin` | `0x0` | Second-stage bootloader |
+| `partition-table.bin` | `0x8000` | Partition table |
+| `cat_food.bin` | `0x10000` | Application firmware |
+
+> **Note**: The flash size is configured for 16 MB (N16R8 module). Use `esptool.py` v4.x or later.
+
 ## 🖥️ Hardware Configuration
 
 The currently active hardware profile is the Cat board. ESP32-S3-EYE LCD pins
