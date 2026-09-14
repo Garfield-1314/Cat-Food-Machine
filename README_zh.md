@@ -108,6 +108,27 @@ idf.py build
 idf.py flash monitor
 ```
 
+### 3. 烧录预编译固件
+
+从 [GitHub Releases](https://github.com/Garfield-1314/Cat-Food-Machine/releases) 下载预编译固件，使用 `esptool.py` 烧录：
+
+```bash
+esptool.py --chip esp32s3 -b 460800 \
+  --before default_reset --after hard_reset \
+  write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m \
+  0x0 bootloader.bin \
+  0x8000 partition-table.bin \
+  0x10000 cat_food.bin
+```
+
+| 文件 | Flash 地址 | 说明 |
+|------|------------|------|
+| `bootloader.bin` | `0x0` | 二级引导程序 |
+| `partition-table.bin` | `0x8000` | 分区表 |
+| `cat_food.bin` | `0x10000` | 应用固件 |
+
+> **注意**：Flash 大小配置为 16MB（N16R8 模块）。需要 `esptool.py` v4.x 或更高版本。
+
 ## 🖥️ 硬件配置
 
 当前启用的是 Cat 板配置。ESP32-S3-EYE 的 LCD 引脚仍保留在源码中，
