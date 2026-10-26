@@ -1,5 +1,7 @@
 # 🐱 Cat Food Machine — 智能猫粮投喂机
 
+[![Build & Release](https://github.com/Garfield-1314/Cat-Food-Machine/actions/workflows/build.yml/badge.svg)](https://github.com/Garfield-1314/Cat-Food-Machine/actions/workflows/build.yml)
+
 English | [中文](./README_zh.md)
 
 An ESP32-S3 based **intelligent cat feeder** with touchscreen UI, WiFi connectivity, scheduled feeding, and stepper motor control.
@@ -26,9 +28,6 @@ An ESP32-S3 based **intelligent cat feeder** with touchscreen UI, WiFi connectiv
 
 ```
 Cat-Food-Machine/
-├── esp32libraries/          # ESP32 library submodules
-│   ├── esp-idf/             # ESP-IDF framework (v5.5.5)
-│   └── example/             # Example projects (LVGL, DVP camera)
 ├── src/                     # Main application firmware
 │   ├── CMakeLists.txt       # IDF project configuration
 │   ├── dependencies.lock    # Component dependency lock
@@ -53,7 +52,10 @@ Cat-Food-Machine/
 │   │       └── src/         # UI implementations
 ├── README.md                # English documentation
 ├── README_zh.md             # Chinese documentation
-└── CHANGELOG.md             # Release history
+├── CHANGELOG.md             # Release history
+├── Makefile                 # Containerized local build targets
+├── .github/workflows/       # CI build + tag-triggered release
+└── scripts/                 # Shared build/packaging script
 ```
 
 ## 🧩 System Architecture
@@ -83,37 +85,111 @@ then returns and the dedicated LVGL task runs the UI loop at 50 Hz.
 
 ### Prerequisites
 
-- **ESP-IDF v5.5.5** (included as a submodule and locked in `dependencies.lock`)
+- **Docker Engine 24+ or Podman 4+** for the containerized build
+- **ESP-IDF v5.5.5** — provided by the build container, or install it separately for a native build
 - ESP32-S3 development board
 - Required hardware components (see [Hardware Configuration](#hardware-configuration))
+- About 20 GB of free disk space for the container image and build outputs
 
-### 1. Clone & Initialize Submodules
+### 1. Clone the Repository
 
 ```bash
-git clone --recursive https://github.com/Garfield-1314/Cat-Food-Machine.git
+git clone https://github.com/Garfield-1314/Cat-Food-Machine.git
 cd Cat-Food-Machine
-
-# If already cloned without --recursive:
-git submodule init
-git submodule update --progress
-
-cd esp32libraries/esp-idf
-git checkout v5.5.5
-git submodule update --init --recursive --progress
-./install.sh
 ```
 
-### 2. Build & Flash
+### 2. Containerized Build (Recommended)
+
+Local builds and CI share the same `espressif/idf:v5.5.5` container, so no local
+ESP-IDF installation is required. The image is managed by Docker and is not part
+of this repository.
+
+#### Install Docker (Ubuntu / WSL2)
 
 ```bash
+sudo apt update
+sudo apt install -y docker.io
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
+newgrp docker          # or log out and back in
+```
+
+With Docker Desktop, enable WSL integration for your distribution instead.
+Verify the installation:
+
+```bash
+docker version
+docker run --rm hello-world
+```
+
+#### Get the ESP-IDF image
+
+The image is about **14 GB**; allow at least 20 GB of free disk space.
+
+```bash
+make pull
+# or: docker pull espressif/idf:v5.5.5
+```
+
+Verify the image:
+
+```bash
+docker run --rm espressif/idf:v5.5.5 idf.py --version
+# ESP-IDF v5.5.5
+```
+
+`make pull` is optional: the first `make build` pulls the image automatically.
+
+#### Build and flash
+
+```bash
+make build      # idf.py build
+make package    # build and stage artifacts in dist/
+make flash      # SERIAL_PORT defaults to /dev/ttyACM0
+make monitor
+```
+
+If Docker reports `permission denied` on `/var/run/docker.sock`, the current
+shell has not picked up the `docker` group yet. Run `newgrp docker`, log in
+again, or use:
+
+```bash
+sg docker -c 'make build'
+```
+
+`make package` writes `dist/` with `bootloader.bin`, `partition-table.bin`,
+`cat_food.bin`, the merged `cat_food-full.bin`, `SHA256SUMS.txt`, plus the ELF
+and map files for debugging.
+
+Useful overrides:
+
+```bash
+make build DOCKER=podman                 # use Podman instead of Docker
+make build MOUNT_OPTS=:z                 # SELinux hosts
+make flash SERIAL_PORT=/dev/ttyUSB0      # different serial port
+```
+
+The container runs with your host UID/GID, so `src/build/`,
+`src/managed_components/` and `dist/` stay owned by your user. Serial flashing
+requires the port to be mapped into the container and the user to have access
+to the `dialout` group (Linux).
+
+### 3. Native ESP-IDF Build (Alternative)
+
+The containerized build above is recommended. To build natively, install
+**ESP-IDF v5.5.5** and export its environment first:
+
+```bash
+. $IDF_PATH/export.sh
 cd src
-source ../esp32libraries/esp-idf/export.sh
-idf.py set-target esp32s3
 idf.py build
 idf.py flash monitor
 ```
 
-### 3. Flash Pre-built Firmware
+The committed `sdkconfig` already selects ESP32-S3, so `idf.py set-target
+esp32s3` is not required for a clean build.
+
+### 4. Flash Pre-built Firmware
 
 Download the pre-built firmware binaries from [GitHub Releases](https://github.com/Garfield-1314/Cat-Food-Machine/releases) and flash them using `esptool.py`:
 
@@ -131,6 +207,15 @@ esptool.py --chip esp32s3 -b 460800 \
 | `bootloader.bin` | `0x0` | Second-stage bootloader |
 | `partition-table.bin` | `0x8000` | Partition table |
 | `cat_food.bin` | `0x10000` | Application firmware |
+
+Alternatively, flash the merged image in a single step:
+
+```bash
+esptool.py --chip esp32s3 -b 460800 \
+  --before default_reset --after hard_reset \
+  write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m \
+  0x0 cat_food-full.bin
+```
 
 > **Note**: The flash size is configured for 16 MB (N16R8 module). Use `esptool.py` v4.x or later.
 

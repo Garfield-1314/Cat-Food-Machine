@@ -1,5 +1,7 @@
 # 🐱 Cat Food Machine — 智能猫粮投喂机
 
+[![Build & Release](https://github.com/Garfield-1314/Cat-Food-Machine/actions/workflows/build.yml/badge.svg)](https://github.com/Garfield-1314/Cat-Food-Machine/actions/workflows/build.yml)
+
 [English](./README.md) | 中文
 
 基于 **ESP32-S3** 的智能猫粮投喂机，配备触控屏界面、WiFi 联网、定时投喂及步进电机控制功能。
@@ -26,9 +28,6 @@
 
 ```
 Cat-Food-Machine/
-├── esp32libraries/          # ESP32 库子模块
-│   ├── esp-idf/             # ESP-IDF 框架 (v5.5.5)
-│   └── example/             # 示例工程 (LVGL, DVP 摄像头)
 ├── src/                     # 主应用固件
 │   ├── CMakeLists.txt       # IDF 工程配置
 │   ├── dependencies.lock    # 组件依赖锁定
@@ -53,7 +52,10 @@ Cat-Food-Machine/
 │   │       └── src/         # UI 实现
 ├── README.md                # 英文说明
 ├── README_zh.md             # 本文件 (中文说明)
-└── CHANGELOG.md             # 版本更新日志
+├── CHANGELOG.md             # 版本更新日志
+├── Makefile                 # 本地容器化编译入口
+├── .github/workflows/       # CI 构建 + 标签自动发版
+└── scripts/                 # 本地/CI 共用的构建打包脚本
 ```
 
 ## 🧩 工程架构与运行流程
@@ -78,37 +80,108 @@ MQTT 连接成功后，设备订阅命令主题 `device/<id>/cmd` 与绑定请�
 
 ### 环境要求
 
-- **ESP-IDF v5.5.5**（以子模块形式包含，且由 `dependencies.lock` 锁定）
+- **Docker Engine 24+ 或 Podman 4+**，用于容器化编译
+- **ESP-IDF v5.5.5** — 由构建容器提供；原生编译需自行安装
 - ESP32-S3 开发板
 - 所需硬件组件（见[硬件配置](#硬件配置)）
+- 约 20 GB 可用磁盘空间，用于容器镜像和构建产物
 
-### 1. 克隆并初始化子模块
+### 1. 克隆仓库
 
 ```bash
-git clone --recursive https://github.com/Garfield-1314/Cat-Food-Machine.git
+git clone https://github.com/Garfield-1314/Cat-Food-Machine.git
 cd Cat-Food-Machine
-
-# 如果已克隆但未初始化子模块：
-git submodule init
-git submodule update --progress
-
-cd esp32libraries/esp-idf
-git checkout v5.5.5
-git submodule update --init --recursive --progress
-./install.sh
 ```
 
-### 2. 编译 & 烧录
+### 2. 容器化编译（推荐）
+
+本地编译与 CI 使用同一个 `espressif/idf:v5.5.5` 容器，无需在宿主机安装
+ESP-IDF。镜像由 Docker 管理，不属于本仓库。
+
+#### 安装 Docker（Ubuntu / WSL2）
 
 ```bash
+sudo apt update
+sudo apt install -y docker.io
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
+newgrp docker          # 或重新登录
+```
+
+如果使用 Docker Desktop，请在设置中为当前 WSL 发行版启用集成。
+安装完成后验证：
+
+```bash
+docker version
+docker run --rm hello-world
+```
+
+#### 获取 ESP-IDF 镜像
+
+镜像大小约 **14 GB**，建议至少预留 20 GB 磁盘空间。
+
+```bash
+make pull
+# 或直接执行：docker pull espressif/idf:v5.5.5
+```
+
+验证镜像：
+
+```bash
+docker run --rm espressif/idf:v5.5.5 idf.py --version
+# ESP-IDF v5.5.5
+```
+
+`make pull` 是可选的，首次执行 `make build` 时也会自动拉取镜像。
+
+#### 编译与烧录
+
+```bash
+make build      # idf.py build
+make package    # 编译并在 dist/ 生成发布产物
+make flash      # SERIAL_PORT 默认 /dev/ttyACM0
+make monitor
+```
+
+如果 Docker 报 `/var/run/docker.sock` 权限错误，说明当前 shell 还没有加载
+`docker` 组。执行 `newgrp docker`、重新登录，或临时使用：
+
+```bash
+sg docker -c 'make build'
+```
+
+`make package` 会在 `dist/` 生成 `bootloader.bin`、`partition-table.bin`、
+`cat_food.bin`、合并镜像 `cat_food-full.bin`、`SHA256SUMS.txt`，以及用于
+调试的 ELF 和 map 文件。
+
+常用覆盖参数：
+
+```bash
+make build DOCKER=podman                 # 使用 Podman
+make build MOUNT_OPTS=:z                 # SELinux 主机
+make flash SERIAL_PORT=/dev/ttyUSB0      # 指定串口
+```
+
+容器以宿主机的 UID/GID 运行，因此 `src/build/`、`src/managed_components/`
+和 `dist/` 不会变成 root 所有。串口烧录需要把设备映射进容器，并确保用户
+属于 `dialout` 组（仅 Linux）。
+
+### 3. 原生 ESP-IDF 编译（备选）
+
+推荐优先使用上面的容器化编译。如需原生编译，请先安装 **ESP-IDF v5.5.5**
+并导出环境变量：
+
+```bash
+. $IDF_PATH/export.sh
 cd src
-source ../esp32libraries/esp-idf/export.sh
-idf.py set-target esp32s3
 idf.py build
 idf.py flash monitor
 ```
 
-### 3. 烧录预编译固件
+仓库中的 `sdkconfig` 已选定 ESP32-S3，干净构建时无需再执行
+`idf.py set-target esp32s3`。
+
+### 4. 烧录预编译固件
 
 从 [GitHub Releases](https://github.com/Garfield-1314/Cat-Food-Machine/releases) 下载预编译固件，使用 `esptool.py` 烧录：
 
@@ -126,6 +199,15 @@ esptool.py --chip esp32s3 -b 460800 \
 | `bootloader.bin` | `0x0` | 二级引导程序 |
 | `partition-table.bin` | `0x8000` | 分区表 |
 | `cat_food.bin` | `0x10000` | 应用固件 |
+
+也可以直接烧录合并镜像，一步完成：
+
+```bash
+esptool.py --chip esp32s3 -b 460800 \
+  --before default_reset --after hard_reset \
+  write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m \
+  0x0 cat_food-full.bin
+```
 
 > **注意**：Flash 大小配置为 16MB（N16R8 模块）。需要 `esptool.py` v4.x 或更高版本。
 
