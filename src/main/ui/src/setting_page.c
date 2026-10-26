@@ -12,7 +12,7 @@
 #include "device/inc/ov2640.h"
 #include "device/inc/st7789.h"
 
-#define FIRMWARE_VERSION "0.2.2"
+#define FIRMWARE_VERSION "0.3.0"
 
 /* NVS 背光亮度存储 */
 #define NVS_NAMESPACE  "lcd_config"

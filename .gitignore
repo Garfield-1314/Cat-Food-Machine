@@ -8,6 +8,10 @@ src/managed_components/
 src/sdkconfig
 src/sdkconfig.old
 
+# Container/local build caches and staged release artifacts
+.cache/
+dist/
+
 # Offline UI simulator build output
 sim/build/
 
