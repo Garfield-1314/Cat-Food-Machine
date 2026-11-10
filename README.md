@@ -91,6 +91,7 @@ then returns and the dedicated LVGL task runs the UI loop at 50 Hz.
 - ESP32-S3 development board
 - Required hardware components (see [Hardware Configuration](#hardware-configuration))
 - Linux or WSL2 host with the ESP-IDF toolchain prerequisites
+- Python 3 and `python3-venv` (Ubuntu/Debian: `sudo apt install python3-venv`)
 
 ### 1. Clone & Initialize Submodules
 

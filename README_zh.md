@@ -86,6 +86,7 @@ MQTT 连接成功后，设备订阅命令主题 `device/<id>/cmd` 与绑定请�
 - ESP32-S3 开发板
 - 所需硬件组件（见[硬件配置](#硬件配置)）
 - Linux 或 WSL2 主机，并满足 ESP-IDF 工具链依赖
+- Python 3 和 `python3-venv`（Ubuntu/Debian：`sudo apt install python3-venv`）
 
 ### 1. 克隆并初始化子模块
 
