@@ -28,9 +28,7 @@ An ESP32-S3 based **intelligent cat feeder** with touchscreen UI, WiFi connectiv
 
 ```
 Cat-Food-Machine/
-├── esp32libraries/          # ESP32 library submodules
-│   ├── esp-idf/             # ESP-IDF framework (v5.5.5)
-│   └── example/             # Example projects (LVGL, DVP camera)
+├── esp-idf/                 # ESP-IDF framework (v5.5.6)
 ├── src/                     # Main application firmware
 │   ├── CMakeLists.txt       # IDF project configuration
 │   ├── dependencies.lock    # Component dependency lock
@@ -87,7 +85,7 @@ then returns and the dedicated LVGL task runs the UI loop at 50 Hz.
 
 ### Prerequisites
 
-- **ESP-IDF v5.5.5** — included as the `esp32libraries` submodule
+- **ESP-IDF v5.5.6** — included as the `esp-idf` submodule
 - ESP32-S3 development board
 - Required hardware components (see [Hardware Configuration](#hardware-configuration))
 - Linux or WSL2 host with the ESP-IDF toolchain prerequisites
@@ -99,26 +97,42 @@ then returns and the dedicated LVGL task runs the UI loop at 50 Hz.
 git clone https://github.com/Garfield-1314/Cat-Food-Machine.git
 cd Cat-Food-Machine
 
-# If already cloned without --recursive:
-git submodule update --init --recursive
+git submodule init
+git submodule update --progress
+
+cd esp-idf
+git checkout v5.5.6
+git submodule update --init --recursive --progress
 ```
 
-If you do not have SSH keys configured for GitHub, map the submodule SSH URLs
-to HTTPS before updating:
+### Slow network
+
+If GitHub is slow, clone the main repository and fetch the submodules through
+gh-proxy:
 
 ```bash
-git config --global url."https://github.com/".insteadOf "git@github.com:"
-git submodule update --init --recursive
+git clone https://gh-proxy.com/https://github.com/Garfield-1314/Cat-Food-Machine.git
+cd Cat-Food-Machine
+
+git -c url."https://gh-proxy.com/https://github.com/".insteadOf="https://github.com/" \
+    -c url."https://gh-proxy.com/https://github.com/".insteadOf="git@github.com:" \
+    submodule update --init esp-idf
+
+cd esp-idf
+git checkout v5.5.6
+git -c url."https://gh-proxy.com/https://github.com/".insteadOf="https://github.com/" \
+    -c url."https://gh-proxy.com/https://github.com/".insteadOf="git@github.com:" \
+    submodule update --init --recursive --progress
 ```
 
 ### 2. Build & Flash
 
 ```bash
-cd esp32libraries/esp-idf
+cd esp-idf
 ./install.sh esp32s3
-cd ../..
+cd ..
 
-. esp32libraries/esp-idf/export.sh
+source ./esp-idf/export.sh
 cd src
 idf.py build
 idf.py flash monitor
@@ -406,7 +420,7 @@ represent saved networks.
 
 | Component | Version | Usage |
 |-----------|---------|-------|
-| ESP-IDF   | v5.5.5  | RTOS, drivers, networking |
+| ESP-IDF   | v5.5.6  | RTOS, drivers, networking |
 | LVGL      | v8.4.0  | Embedded GUI library |
 | ST7789    | —       | SPI LCD controller |
 | GT911     | —       | Capacitive touch controller |

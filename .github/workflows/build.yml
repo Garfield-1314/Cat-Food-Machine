@@ -21,20 +21,27 @@ jobs:
     name: Build firmware
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      IDF_VERSION: v5.5.6
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Checkout submodules
+      - name: Checkout ESP-IDF submodule
         run: |
           # .gitmodules uses SSH URLs; rewrite them to HTTPS so CI can fetch
-          # the public submodules without an SSH key.
+          # ESP-IDF and its nested submodules without an SSH key.
           git config --global url."https://github.com/".insteadOf "git@github.com:"
-          git submodule update --init --recursive --depth 1
+          git submodule update --init esp-idf
+          git -C esp-idf checkout "${IDF_VERSION}"
+          git -C esp-idf submodule update --init --recursive
 
       - name: Read ESP-IDF revision
         id: idf
-        run: echo "sha=$(git -C esp32libraries/esp-idf rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          sha="$(git -C esp-idf rev-parse HEAD)"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "ESP-IDF $(git -C esp-idf describe --tags --always) (${sha})"
 
       - name: Restore ESP-IDF tools
         uses: actions/cache@v6
@@ -53,12 +60,12 @@ jobs:
             ccache-${{ runner.os }}-
 
       - name: Install ccache
-        run: sudo apt-get install -y ccache
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ccache
 
       - name: Install ESP-IDF tools
-        run: |
-          cd esp32libraries/esp-idf
-          ./install.sh esp32s3
+        run: ./esp-idf/install.sh esp32s3
 
       - name: Build and package firmware
         env:
@@ -66,7 +73,7 @@ jobs:
           CCACHE_DIR: ${{ github.workspace }}/.cache/ccache
         run: |
           mkdir -p "${CCACHE_DIR}"
-          . esp32libraries/esp-idf/export.sh
+          . ./esp-idf/export.sh
           bash scripts/build_firmware.sh
 
       - name: Upload firmware artifact
