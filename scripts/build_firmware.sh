@@ -3,8 +3,8 @@
 # Build the Cat Food Machine firmware and stage release artifacts in dist/.
 #
 # This script is used by local builds and GitHub Actions, so keep it free of
-# host-specific assumptions. It must run in an environment where ESP-IDF v5.5.5
-# has already been exported from esp32libraries/esp-idf/export.sh.
+# host-specific assumptions. It must run in an environment where ESP-IDF v5.5.6
+# has already been exported from esp-idf/export.sh.
 #
 set -euo pipefail
 

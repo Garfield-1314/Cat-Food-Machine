@@ -28,9 +28,7 @@
 
 ```
 Cat-Food-Machine/
-├── esp32libraries/          # ESP32 库子模块
-│   ├── esp-idf/             # ESP-IDF 框架 (v5.5.5)
-│   └── example/             # 示例工程 (LVGL, DVP 摄像头)
+├── esp-idf/                 # ESP-IDF 框架 (v5.5.6)
 ├── src/                     # 主应用固件
 │   ├── CMakeLists.txt       # IDF 工程配置
 │   ├── dependencies.lock    # 组件依赖锁定
@@ -82,7 +80,7 @@ MQTT 连接成功后，设备订阅命令主题 `device/<id>/cmd` 与绑定请�
 
 ### 环境要求
 
-- **ESP-IDF v5.5.5** — 以 `esp32libraries` 子模块形式包含
+- **ESP-IDF v5.5.6** — 以 `esp-idf` 子模块形式包含
 - ESP32-S3 开发板
 - 所需硬件组件（见[硬件配置](#硬件配置)）
 - Linux 或 WSL2 主机，并满足 ESP-IDF 工具链依赖
@@ -94,25 +92,41 @@ MQTT 连接成功后，设备订阅命令主题 `device/<id>/cmd` 与绑定请�
 git clone https://github.com/Garfield-1314/Cat-Food-Machine.git
 cd Cat-Food-Machine
 
-# 如果已克隆但未初始化子模块：
-git submodule update --init --recursive
+git submodule init
+git submodule update --progress
+
+cd esp-idf
+git checkout v5.5.6
+git submodule update --init --recursive --progress
 ```
 
-如果没有配置 GitHub SSH key，可先把子模块的 SSH 地址映射为 HTTPS：
+### 网络较慢
+
+如果从 GitHub 拉取较慢，可以使用 gh-proxy 克隆主仓库并拉取子模块：
 
 ```bash
-git config --global url."https://github.com/".insteadOf "git@github.com:"
-git submodule update --init --recursive
+git clone https://gh-proxy.com/https://github.com/Garfield-1314/Cat-Food-Machine.git
+cd Cat-Food-Machine
+
+git -c url."https://gh-proxy.com/https://github.com/".insteadOf="https://github.com/" \
+    -c url."https://gh-proxy.com/https://github.com/".insteadOf="git@github.com:" \
+    submodule update --init esp-idf
+
+cd esp-idf
+git checkout v5.5.6
+git -c url."https://gh-proxy.com/https://github.com/".insteadOf="https://github.com/" \
+    -c url."https://gh-proxy.com/https://github.com/".insteadOf="git@github.com:" \
+    submodule update --init --recursive --progress
 ```
 
 ### 2. 编译 & 烧录
 
 ```bash
-cd esp32libraries/esp-idf
+cd esp-idf
 ./install.sh esp32s3
-cd ../..
+cd ..
 
-. esp32libraries/esp-idf/export.sh
+source ./esp-idf/export.sh
 cd src
 idf.py build
 idf.py flash monitor
@@ -368,7 +382,7 @@ bool connected = wifi_app_is_connected();
 
 | 组件        | 版本     | 用途                       |
 |------------|---------|---------------------------|
-| ESP-IDF    | v5.5.5  | RTOS、驱动、网络             |
+| ESP-IDF    | v5.5.6  | RTOS、驱动、网络             |
 | LVGL       | v8.4.0  | 嵌入式 GUI 图形库           |
 | ST7789     | —       | SPI 液晶屏控制器            |
 | GT911      | —       | 电容触摸控制器               |
